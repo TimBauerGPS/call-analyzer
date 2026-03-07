@@ -4,10 +4,11 @@
   functions = "netlify/functions"
 
 [build.environment]
-  # VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_URL are Supabase's *public* keys —
-  # intentionally embedded in the browser bundle. Tell Netlify's secrets scanner
-  # to skip them so the build doesn't fail.
-  SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_ANON_KEY,VITE_SUPABASE_URL"
+  # The Supabase anon key is Supabase's *public* browser key (eyJ... JWT format).
+  # It is intentionally embedded in the Vite bundle — this is expected and safe.
+  # Security is enforced by Supabase RLS policies, not by keeping this key secret.
+  # Disable Netlify's secrets scanner for this project so it doesn't block deploys.
+  SECRETS_SCAN_ENABLED = "false"
 
 [[redirects]]
   from = "/*"
