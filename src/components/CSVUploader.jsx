@@ -1,15 +1,33 @@
 import { useRef, useState } from 'react'
 import { parseJobCSV } from '../lib/parseCSV'
 
+const STALE_DAYS = 5
+
+function daysSince(dateStr) {
+  if (!dateStr) return Infinity
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
 /**
  * Drag-and-drop CSV upload for job management data (Albiware or generic).
  * Calls onLoaded({ jobMap, rowCount }) on success.
+ * Shows a staleness warning if the CSV hasn't been updated in 5+ days.
  */
-export default function CSVUploader({ jobMap, onLoaded, onClear }) {
+export default function CSVUploader({ jobMap, uploadedAt, rowCount, onLoaded, onClear }) {
   const [dragging, setDragging] = useState(false)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef()
+
+  const days = daysSince(uploadedAt)
+  const isStale = days >= STALE_DAYS
 
   async function processFile(file) {
     if (!file.name.match(/\.(csv|txt)$/i)) {
@@ -35,28 +53,48 @@ export default function CSVUploader({ jobMap, onLoaded, onClear }) {
     if (file) processFile(file)
   }
 
+  // Staleness warning — shown in both loaded and unloaded states
+  const stalenessWarning = uploadedAt && isStale ? (
+    <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+      <span className="text-amber-500 mt-0.5 flex-shrink-0">⚠</span>
+      <p className="text-xs text-amber-700">
+        Please update Albi Data. It has not been updated since{' '}
+        <strong>{formatDate(uploadedAt)}</strong>.
+      </p>
+    </div>
+  ) : null
+
   if (jobMap && jobMap.size > 0) {
     return (
-      <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-        <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <div className="flex-1">
-          <span className="text-sm font-medium text-green-800">Job CSV loaded</span>
-          <span className="text-xs text-green-600 ml-2">{jobMap.size} records</span>
+      <div className="space-y-2">
+        {stalenessWarning}
+        <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+          <svg className="w-5 h-5 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div className="flex-1">
+            <span className="text-sm font-medium text-green-800">Job CSV loaded</span>
+            <span className="text-xs text-green-600 ml-2">
+              {jobMap.size.toLocaleString()} unique phones
+              {rowCount && rowCount > jobMap.size
+                ? ` from ${rowCount.toLocaleString()} rows`
+                : ''}
+            </span>
+          </div>
+          <button
+            onClick={onClear}
+            className="text-xs text-green-700 hover:text-green-900 underline"
+          >
+            Clear
+          </button>
         </div>
-        <button
-          onClick={onClear}
-          className="text-xs text-green-700 hover:text-green-900 underline"
-        >
-          Clear
-        </button>
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="space-y-2">
+      {stalenessWarning}
       <div
         className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors ${
           dragging ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-gray-400'
@@ -91,7 +129,7 @@ export default function CSVUploader({ jobMap, onLoaded, onClear }) {
       </div>
 
       {error && (
-        <p className="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+        <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error}
         </p>
       )}

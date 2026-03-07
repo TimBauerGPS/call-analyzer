@@ -47,6 +47,16 @@ export default function Dashboard({ session }) {
   const [showKey, setShowKey] = useState({ callrail: false, openai: false })
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsSaved, setSettingsSaved] = useState(false)
+  const [settingsError, setSettingsError] = useState(null)
+
+  // CSV metadata (persisted across page reloads via localStorage)
+  const [csvRowCount, setCsvRowCount] = useState(() => {
+    const s = localStorage.getItem('csvRowCount')
+    return s ? parseInt(s, 10) : 0
+  })
+  const [csvUploadedAt, setCsvUploadedAt] = useState(() =>
+    localStorage.getItem('csvUploadedAt') || null
+  )
 
   // Are API keys configured?
   const keysConfigured = !!(
@@ -96,13 +106,14 @@ export default function Dashboard({ session }) {
 
   async function saveSettings() {
     setSettingsSaving(true)
+    setSettingsError(null)
     const { error } = await supabase.from('user_settings').upsert({
       user_id: session.user.id,
       callrail_api_key: settingsForm.callrail_api_key.trim(),
       callrail_account_id: settingsForm.callrail_account_id.trim(),
       openai_api_key: settingsForm.openai_api_key.trim(),
       sales_tips_prompt: settingsForm.sales_tips_prompt,
-    })
+    }, { onConflict: 'user_id' })
     if (!error) {
       await loadSettings()
       setSettingsSaved(true)
@@ -110,13 +121,28 @@ export default function Dashboard({ session }) {
       if (settingsForm.callrail_api_key && settingsForm.callrail_account_id && settingsForm.openai_api_key) {
         setSettingsOpen(false)
       }
+    } else {
+      setSettingsError('Save failed: ' + error.message)
     }
     setSettingsSaving(false)
   }
 
   // --- CSV job data ---
-  function handleCSVLoaded({ jobMap }) { setJobMap(jobMap) }
-  function handleCSVClear() { setJobMap(null) }
+  function handleCSVLoaded({ jobMap, rowCount }) {
+    setJobMap(jobMap)
+    setCsvRowCount(rowCount || 0)
+    const now = new Date().toISOString()
+    setCsvUploadedAt(now)
+    localStorage.setItem('csvUploadedAt', now)
+    localStorage.setItem('csvRowCount', String(rowCount || 0))
+  }
+  function handleCSVClear() {
+    setJobMap(null)
+    setCsvRowCount(0)
+    setCsvUploadedAt(null)
+    localStorage.removeItem('csvUploadedAt')
+    localStorage.removeItem('csvRowCount')
+  }
 
   // --- API call wrapper that includes auth header ---
   async function apiFetch(path, options = {}) {
@@ -442,6 +468,7 @@ export default function Dashboard({ session }) {
 
             {/* Save button */}
             <div className="flex items-center gap-3 justify-end pt-1">
+              {settingsError && <span className="text-xs text-red-600">{settingsError}</span>}
               {settingsSaved && <span className="text-xs text-green-600">✓ Saved</span>}
               <button
                 onClick={saveSettings}
@@ -474,7 +501,13 @@ export default function Dashboard({ session }) {
             <h2 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">
               Step 1 — Job Data (optional)
             </h2>
-            <CSVUploader jobMap={jobMap} onLoaded={handleCSVLoaded} onClear={handleCSVClear} />
+            <CSVUploader
+              jobMap={jobMap}
+              uploadedAt={csvUploadedAt}
+              rowCount={csvRowCount}
+              onLoaded={handleCSVLoaded}
+              onClear={handleCSVClear}
+            />
           </div>
 
           <div className="border-t border-gray-100" />
