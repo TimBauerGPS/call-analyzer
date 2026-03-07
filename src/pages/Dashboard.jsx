@@ -19,7 +19,6 @@ function daysAgo(n) {
   const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10)
 }
 
-// Masked display: show first 6 chars then ••••••••
 function maskKey(key) {
   if (!key) return ''
   return key.slice(0, 6) + '••••••••' + key.slice(-4)
@@ -44,11 +43,16 @@ export default function Dashboard({ session }) {
     callrail_account_id: '',
     openai_api_key: '',
     sales_tips_prompt: DEFAULT_SALES_TIPS,
+    company_id: '',      // UUID of the selected company
+    newCompanyName: '',  // text input when creating a new company
   })
   const [showKey, setShowKey] = useState({ callrail: false, openai: false })
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [settingsError, setSettingsError] = useState(null)
+
+  // Companies list (for dropdown)
+  const [companies, setCompanies] = useState([])
 
   // Change password state
   const [newPassword, setNewPassword] = useState('')
@@ -57,7 +61,7 @@ export default function Dashboard({ session }) {
   const [passwordSaved, setPasswordSaved] = useState(false)
   const [passwordError, setPasswordError] = useState(null)
 
-  // Auto-fetch on login (stored in localStorage, user-controlled)
+  // Auto-fetch on login (localStorage, user-controlled)
   const [autoFetch, setAutoFetch] = useState(() =>
     localStorage.getItem('autoFetchOnLogin') === 'true'
   )
@@ -73,20 +77,21 @@ export default function Dashboard({ session }) {
   )
   const [csvMatchMessage, setCsvMatchMessage] = useState(null)
 
-  // Are API keys configured?
+  // Derived
   const keysConfigured = !!(
     userSettings?.callrail_api_key &&
     userSettings?.callrail_account_id &&
     userSettings?.openai_api_key
   )
+  const companyName = companies.find(c => c.id === userSettings?.company_id)?.name || null
 
-  // Auth header for every serverless call
   const authHeader = () => ({ Authorization: `Bearer ${session.access_token}` })
 
-  // --- Load existing calls + settings on mount ---
+  // --- Load on mount ---
   useEffect(() => {
     loadCalls()
     loadSettings()
+    loadCompanies()
   }, [])
 
   async function loadCalls() {
@@ -96,6 +101,14 @@ export default function Dashboard({ session }) {
       .order('call_date', { ascending: false })
       .limit(500)
     if (!error) setCalls(data || [])
+  }
+
+  async function loadCompanies() {
+    const { data } = await supabase
+      .from('companies')
+      .select('id, name')
+      .order('name')
+    if (data) setCompanies(data)
   }
 
   async function loadSettings() {
@@ -111,15 +124,16 @@ export default function Dashboard({ session }) {
         callrail_account_id: data.callrail_account_id || '',
         openai_api_key: data.openai_api_key || '',
         sales_tips_prompt: data.sales_tips_prompt || DEFAULT_SALES_TIPS,
+        company_id: data.company_id || '',
+        newCompanyName: '',
       })
     } else {
-      // First time — open settings automatically
       setSettingsOpen(true)
     }
     setSettingsLoaded(true)
   }
 
-  // Auto-fetch trigger: runs once after settings are loaded (if keys are configured)
+  // Auto-fetch trigger: once after settings load
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!settingsLoaded || hasAutoFetched.current) return
@@ -136,13 +150,52 @@ export default function Dashboard({ session }) {
   async function saveSettings() {
     setSettingsSaving(true)
     setSettingsError(null)
+
+    // Handle new company creation
+    let companyId = settingsForm.company_id
+    if (settingsForm.company_id === 'new') {
+      const name = settingsForm.newCompanyName.trim()
+      if (!name) {
+        setSettingsError('Enter a company name.')
+        setSettingsSaving(false)
+        return
+      }
+      const { data: newCo, error: coErr } = await supabase
+        .from('companies')
+        .insert({ name })
+        .select('id, name')
+        .single()
+
+      if (coErr) {
+        // Unique constraint: company already exists — find and use it
+        const { data: existing } = await supabase
+          .from('companies')
+          .select('id, name')
+          .eq('name', name)
+          .single()
+        if (existing) {
+          companyId = existing.id
+          setCompanies(prev => prev.find(c => c.id === existing.id) ? prev : [...prev, existing].sort((a, b) => a.name.localeCompare(b.name)))
+        } else {
+          setSettingsError('Could not create company: ' + coErr.message)
+          setSettingsSaving(false)
+          return
+        }
+      } else {
+        companyId = newCo.id
+        setCompanies(prev => [...prev, newCo].sort((a, b) => a.name.localeCompare(b.name)))
+      }
+    }
+
     const { error } = await supabase.from('user_settings').upsert({
       user_id: session.user.id,
       callrail_api_key: settingsForm.callrail_api_key.trim(),
       callrail_account_id: settingsForm.callrail_account_id.trim(),
       openai_api_key: settingsForm.openai_api_key.trim(),
       sales_tips_prompt: settingsForm.sales_tips_prompt,
+      company_id: companyId || null,
     }, { onConflict: 'user_id' })
+
     if (!error) {
       await loadSettings()
       setSettingsSaved(true)
@@ -157,14 +210,8 @@ export default function Dashboard({ session }) {
   }
 
   async function changePassword() {
-    if (newPassword !== confirmPassword) {
-      setPasswordError('Passwords do not match')
-      return
-    }
-    if (newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters')
-      return
-    }
+    if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match'); return }
+    if (newPassword.length < 8) { setPasswordError('Password must be at least 8 characters'); return }
     setPasswordSaving(true)
     setPasswordError(null)
     const { error } = await supabase.auth.updateUser({ password: newPassword })
@@ -202,7 +249,6 @@ export default function Dashboard({ session }) {
 
     if (!toUpdate.length) return 0
 
-    // Batch parallel updates
     const BATCH = 10
     for (let i = 0; i < toUpdate.length; i += BATCH) {
       await Promise.all(
@@ -218,7 +264,6 @@ export default function Dashboard({ session }) {
         )
       )
     }
-
     return toUpdate.length
   }
 
@@ -231,7 +276,6 @@ export default function Dashboard({ session }) {
     localStorage.setItem('csvUploadedAt', now)
     localStorage.setItem('csvRowCount', String(rowCount || 0))
 
-    // Retroactively match existing calls in DB
     setCsvMatchMessage('Matching existing calls with Albi data…')
     const matched = await retroactivelyMatchCSV(newJobMap)
     setCsvMatchMessage(
@@ -252,7 +296,6 @@ export default function Dashboard({ session }) {
     localStorage.removeItem('csvRowCount')
   }
 
-  // --- API call wrapper that includes auth header ---
   async function apiFetch(path, options = {}) {
     const res = await fetch(API(path), {
       ...options,
@@ -292,6 +335,7 @@ export default function Dashboard({ session }) {
         const callLink = call.recording_player || `https://app.callrail.com/calls/${call.id}`
         return {
           user_id: session.user.id,
+          company_id: userSettings?.company_id || null,
           callrail_id: call.id,
           caller_number: call.customer_phone_number,
           call_date: call.start_time,
@@ -304,7 +348,6 @@ export default function Dashboard({ session }) {
           customer_name: jobData.customerName || null,
           albi_url: jobData.albiUrl || null,
           contract_signed: jobData.contractSigned || null,
-          // Attribution / PPC fields from CallRail
           utm_source: call.utm_source || null,
           utm_medium: call.utm_medium || null,
           utm_campaign: call.utm_campaign || null,
@@ -317,9 +360,7 @@ export default function Dashboard({ session }) {
       })
 
       // ignoreDuplicates: true — skip calls that already exist in the DB entirely.
-      // This prevents re-analyzing calls that are already complete or deep-analyzed,
-      // and preserves any existing transcript / deep analysis data.
-      // Only brand-new calls (not yet in the DB) are inserted and returned.
+      // Prevents re-analyzing calls that are already complete or deep-analyzed.
       const { data: upserted, error: upsertErr } = await supabase
         .from('calls')
         .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
@@ -364,21 +405,17 @@ export default function Dashboard({ session }) {
 
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
-
     const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}`)
-
     const { transcript } = await apiFetch('openai-transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ audioUrl }),
     })
-
     const { analysis } = await apiFetch('openai-analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcript }),
     })
-
     await supabase.from('calls').update({
       transcript,
       handler_name: analysis.handlerName || null,
@@ -458,6 +495,14 @@ export default function Dashboard({ session }) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between h-14">
           <div className="flex items-center gap-3">
             <span className="font-bold text-gray-900 text-sm">Call Analyzer</span>
+            {companyName && (
+              <>
+                <span className="text-gray-300 text-xs">|</span>
+                <span className="text-xs font-medium text-brand-700 bg-brand-50 px-2 py-0.5 rounded-full">
+                  {companyName}
+                </span>
+              </>
+            )}
             <span className="text-gray-300 text-xs">|</span>
             <span className="text-xs text-gray-500">{session.user.email}</span>
           </div>
@@ -493,17 +538,52 @@ export default function Dashboard({ session }) {
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-900">Settings</h2>
               {keysConfigured && (
-                <button
-                  onClick={() => setSettingsOpen(false)}
-                  className="text-xs text-gray-400 hover:text-gray-600"
-                >
+                <button onClick={() => setSettingsOpen(false)} className="text-xs text-gray-400 hover:text-gray-600">
                   ✕ Close
                 </button>
               )}
             </div>
 
+            {/* Team / Company */}
+            <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Team / Company</h3>
+              <p className="text-xs text-gray-500">
+                Selecting a company lets multiple team members share the same call data. Everyone on the same company sees the same calls.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Company</label>
+                <select
+                  value={settingsForm.company_id}
+                  onChange={e => setSettingsForm(f => ({ ...f, company_id: e.target.value, newCompanyName: '' }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                >
+                  <option value="">— Private account (no company) —</option>
+                  {companies.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                  <option value="new">＋ Add new company…</option>
+                </select>
+              </div>
+              {settingsForm.company_id === 'new' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">New company name</label>
+                  <input
+                    type="text"
+                    value={settingsForm.newCompanyName}
+                    onChange={e => setSettingsForm(f => ({ ...f, newCompanyName: e.target.value }))}
+                    placeholder="e.g. Allied Restoration Services"
+                    autoFocus
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">
+                    This name will appear in the company dropdown for all team members.
+                  </p>
+                </div>
+              )}
+            </div>
+
             {/* API Keys section */}
-            <div className="space-y-4">
+            <div className="space-y-4 pt-2 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">API Keys</h3>
               <p className="text-xs text-gray-500">
                 Your keys are stored securely in your account and used server-side only — they are never exposed to the browser after saving.
@@ -520,11 +600,8 @@ export default function Dashboard({ session }) {
                     placeholder="Enter your CallRail API key"
                     className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700"
-                  >
+                  <button type="button" onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
                     {showKey.callrail ? 'Hide' : 'Show'}
                   </button>
                 </div>
@@ -543,9 +620,7 @@ export default function Dashboard({ session }) {
                   placeholder="e.g. 123456789"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
-                <p className="mt-1 text-xs text-gray-400">
-                  CallRail → Settings → API → Account ID
-                </p>
+                <p className="mt-1 text-xs text-gray-400">CallRail → Settings → API → Account ID</p>
               </div>
 
               {/* OpenAI API Key */}
@@ -559,11 +634,8 @@ export default function Dashboard({ session }) {
                     placeholder="sk-..."
                     className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowKey(k => ({ ...k, openai: !k.openai }))}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700"
-                  >
+                  <button type="button" onClick={() => setShowKey(k => ({ ...k, openai: !k.openai }))}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
                     {showKey.openai ? 'Hide' : 'Show'}
                   </button>
                 </div>
@@ -579,9 +651,7 @@ export default function Dashboard({ session }) {
             {/* Sales tips prompt */}
             <div className="space-y-2 pt-2 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Sales Tips Prompt</h3>
-              <p className="text-xs text-gray-500">
-                Customize what the AI focuses on when generating sales tips.
-              </p>
+              <p className="text-xs text-gray-500">Customize what the AI focuses on when generating sales tips.</p>
               <textarea
                 value={settingsForm.sales_tips_prompt}
                 onChange={e => setSettingsForm(f => ({ ...f, sales_tips_prompt: e.target.value }))}
@@ -590,17 +660,13 @@ export default function Dashboard({ session }) {
               />
             </div>
 
-            {/* Auto-fetch on login toggle */}
+            {/* Auto-fetch toggle */}
             <div className="pt-2 border-t border-gray-100">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fetch Behavior</h3>
-              <label className="flex items-center gap-3 cursor-pointer group">
+              <label className="flex items-center gap-3 cursor-pointer">
                 <div className="relative">
-                  <input
-                    type="checkbox"
-                    className="sr-only"
-                    checked={autoFetch}
-                    onChange={e => toggleAutoFetch(e.target.checked)}
-                  />
+                  <input type="checkbox" className="sr-only" checked={autoFetch}
+                    onChange={e => toggleAutoFetch(e.target.checked)} />
                   <div className={`w-9 h-5 rounded-full transition-colors ${autoFetch ? 'bg-brand-600' : 'bg-gray-300'}`} />
                   <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoFetch ? 'translate-x-4' : ''}`} />
                 </div>
@@ -611,52 +677,38 @@ export default function Dashboard({ session }) {
               </label>
             </div>
 
-            {/* Save API keys + prompt button */}
+            {/* Save button */}
             <div className="flex items-center gap-3 justify-end pt-1 border-t border-gray-100">
               {settingsError && <span className="text-xs text-red-600">{settingsError}</span>}
               {settingsSaved && <span className="text-xs text-green-600">✓ Saved</span>}
-              <button
-                onClick={saveSettings}
-                disabled={settingsSaving}
-                className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 font-medium"
-              >
+              <button onClick={saveSettings} disabled={settingsSaving}
+                className="px-4 py-2 text-sm rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50 font-medium">
                 {settingsSaving ? 'Saving…' : 'Save Settings'}
               </button>
             </div>
 
-            {/* Change Password section */}
+            {/* Change Password */}
             <div className="pt-2 border-t border-gray-100 space-y-3">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Change Password</h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">New password</label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)}
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
                     placeholder="Min 8 characters"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Confirm password</label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
+                  <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
                     placeholder="Re-enter password"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 {passwordError && <span className="text-xs text-red-600">{passwordError}</span>}
                 {passwordSaved && <span className="text-xs text-green-600">✓ Password updated</span>}
-                <button
-                  onClick={changePassword}
-                  disabled={passwordSaving || !newPassword}
-                  className="px-4 py-2 text-sm rounded-lg bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-50 font-medium ml-auto"
-                >
+                <button onClick={changePassword} disabled={passwordSaving || !newPassword}
+                  className="px-4 py-2 text-sm rounded-lg bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-50 font-medium ml-auto">
                   {passwordSaving ? 'Updating…' : 'Update Password'}
                 </button>
               </div>
@@ -669,35 +721,26 @@ export default function Dashboard({ session }) {
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
             <p className="text-sm font-medium text-amber-800 mb-1">API keys required before fetching calls</p>
             <p className="text-xs text-amber-600 mb-4">Add your CallRail and OpenAI credentials in Settings.</p>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="px-4 py-2 text-sm rounded-lg bg-amber-700 text-white hover:bg-amber-800"
-            >
+            <button onClick={() => setSettingsOpen(true)}
+              className="px-4 py-2 text-sm rounded-lg bg-amber-700 text-white hover:bg-amber-800">
               Open Settings
             </button>
           </div>
         )}
 
-        {/* Auto-fetch prompt (shown on login when auto-fetch is off) */}
+        {/* Auto-fetch login prompt */}
         {showFetchPrompt && keysConfigured && !settingsOpen && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-sm font-medium text-blue-800">Fetch new calls?</p>
-              <p className="text-xs text-blue-600 mt-0.5">
-                Last 7 days · {dateRange.start} → {dateRange.end}
-              </p>
+              <p className="text-xs text-blue-600 mt-0.5">Last 7 days · {dateRange.start} → {dateRange.end}</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => { setShowFetchPrompt(false); handleFetchCalls() }}
-                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
+              <button onClick={() => { setShowFetchPrompt(false); handleFetchCalls() }}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                 Fetch Calls
               </button>
-              <button
-                onClick={() => setShowFetchPrompt(false)}
-                className="text-xs text-blue-500 hover:text-blue-700"
-              >
+              <button onClick={() => setShowFetchPrompt(false)} className="text-xs text-blue-500 hover:text-blue-700">
                 Dismiss
               </button>
             </div>
@@ -735,11 +778,7 @@ export default function Dashboard({ session }) {
               Step 2 — Fetch &amp; Analyze Calls
             </h2>
             <div className="flex flex-wrap items-center gap-3">
-              <DateRangePicker
-                start={dateRange.start}
-                end={dateRange.end}
-                onChange={setDateRange}
-              />
+              <DateRangePicker start={dateRange.start} end={dateRange.end} onChange={setDateRange} />
               <button
                 onClick={handleFetchCalls}
                 disabled={fetchButtonDisabled}
@@ -751,19 +790,14 @@ export default function Dashboard({ session }) {
                     <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
                     Working…
                   </>
-                ) : (
-                  'Fetch Calls'
-                )}
+                ) : 'Fetch Calls'}
               </button>
             </div>
-
             {fetchMessage && (
               <div className={`mt-3 text-xs px-3 py-2 rounded-lg border ${
-                fetchStatus === 'error'
-                  ? 'bg-red-50 border-red-200 text-red-700'
-                  : fetchStatus === 'done'
-                  ? 'bg-green-50 border-green-200 text-green-700'
-                  : 'bg-blue-50 border-blue-200 text-blue-700'
+                fetchStatus === 'error' ? 'bg-red-50 border-red-200 text-red-700'
+                : fetchStatus === 'done' ? 'bg-green-50 border-green-200 text-green-700'
+                : 'bg-blue-50 border-blue-200 text-blue-700'
               }`}>
                 {fetchMessage}
               </div>

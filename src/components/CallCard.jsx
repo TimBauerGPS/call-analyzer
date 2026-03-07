@@ -34,6 +34,39 @@ function formatDuration(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+function buildFeedbackEmail(call) {
+  const subject = `Feedback on call from ${call.caller_number || 'Unknown'}`
+
+  const sections = []
+  if (call.notes)
+    sections.push(`CALL SUMMARY\n${call.notes}`)
+  if (call.sales_tips)
+    sections.push(`SALES TIPS\n${call.sales_tips}`)
+  if (call.coaching_tips?.length > 0)
+    sections.push(`COACHING TIPS\n${call.coaching_tips.map(t => `• ${t}`).join('\n')}`)
+  if (call.missed_flags?.length > 0)
+    sections.push(`MISSED OPPORTUNITIES\n${call.missed_flags.map(f => `⚠ ${f}`).join('\n')}`)
+  if (call.tonal_feedback)
+    sections.push(`TONAL FEEDBACK\n${call.tonal_feedback}`)
+  if (call.talk_time_ratio)
+    sections.push(`TALK-TIME RATIO\n${call.talk_time_ratio}`)
+
+  const callRef = call.recording_url ? ` (${call.recording_url})` : ''
+  const greeting = call.handler_name ? `Hello ${call.handler_name},` : 'Hello,'
+
+  const body = [
+    greeting,
+    '',
+    `We are using an AI Sales Tool that is helping us analyze how our digital marketing leads are being handled when they call in. I wanted to share with you the feedback that the tool is giving on this call${callRef}.`,
+    '',
+    'Please note that these tips are meant to be helpful and we are committed to making sure every customer leaves our company happy and satisfied!',
+    '',
+    ...sections.flatMap(s => [s, '']),
+  ].join('\n')
+
+  return { subject, body }
+}
+
 function formatDate(iso) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('en-US', {
@@ -281,21 +314,39 @@ export default function CallCard({ call, onDeepAnalyze }) {
           )}
 
           {/* Actions */}
-          <div className="flex items-center justify-between pt-1">
-            {call.recording_url && (
-              <a
-                href={call.recording_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-brand-600 hover:underline flex items-center gap-1"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                Listen in CallRail
-              </a>
-            )}
+          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+            <div className="flex items-center gap-3">
+              {call.recording_url && (
+                <a
+                  href={call.recording_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-brand-600 hover:underline flex items-center gap-1"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Listen in CallRail
+                </a>
+              )}
+
+              {call.analysis_status === 'complete' && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    const { subject, body } = buildFeedbackEmail(call)
+                    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+                  }}
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  Email to Handler
+                </button>
+              )}
+            </div>
 
             {canDeepAnalyze && (
               <button
@@ -313,7 +364,7 @@ export default function CallCard({ call, onDeepAnalyze }) {
                 )}
               </button>
             )}
-          </div>
+          </div> {/* end actions */}
         </div>
       )}
 
