@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body {
+      font-family: 'Google Sans', Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+      background: #f8f9fa;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 8px;
+      padding: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    h2 {
+      margin: 0 0 8px 0;
+      font-size: 20px;
+      font-weight: 500;
+      color: #202124;
+    }
+    
+    .subtitle {
+      color: #5f6368;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    
+    .upload-area {
+      border: 2px dashed #dadce0;
+      border-radius: 8px;
+      padding: 32px 16px;
+      text-align: center;
+      margin-bottom: 16px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+    
+    .upload-area:hover {
+      border-color: #1a73e8;
+      background: #f1f8ff;
+    }
+    
+    .upload-area.dragging {
+      border-color: #1a73e8;
+      background: #e8f0fe;
+    }
+    
+    .upload-icon {
+      font-size: 48px;
+      color: #5f6368;
+      margin-bottom: 12px;
+    }
+    
+    #fileInput {
+      display: none;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    .btn-primary {
+      background: #1a73e8;
+      color: white;
+    }
+    
+    .btn-primary:hover:not(:disabled) {
+      background: #1557b0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    
+    .btn-secondary {
+      background: white;
+      color: #5f6368;
+      border: 1px solid #dadce0;
+      margin-top: 8px;
+    }
+    
+    .btn-secondary:hover:not(:disabled) {
+      background: #f8f9fa;
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin: 16px 0;
+      font-size: 14px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #e6f4ea;
+      color: #137333;
+      border-left: 4px solid #137333;
+    }
+    
+    .status.error {
+      background: #fce8e6;
+      color: #c5221f;
+      border-left: 4px solid #c5221f;
+    }
+    
+    .status.info {
+      background: #e8f0fe;
+      color: #1967d2;
+      border-left: 4px solid #1967d2;
+    }
+    
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 16px;
+    }
+    
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #1a73e8;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 12px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .sync-prompt {
+      display: none;
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid #dadce0;
+    }
+    
+    .sync-prompt h3 {
+      margin: 0 0 16px 0;
+      font-size: 16px;
+      font-weight: 500;
+      color: #202124;
+    }
+    
+    .file-info {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #5f6368;
+      margin-top: 8px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Upload Albi Data</h2>
+    <p class="subtitle">Import Excel file from Albiware</p>
+    
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+      <div class="upload-icon">📁</div>
+      <div><strong>Click to upload</strong> or drag and drop</div>
+      <div style="font-size: 12px; color: #5f6368; margin-top: 8px;">Excel files (.xlsx, .xls)</div>
+    </div>
+    
+    <div class="file-info" id="fileInfo"></div>
+    
+    <input type="file" id="fileInput" accept=".xlsx,.xls" />
+    
+    <div class="status" id="status"></div>
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div>Processing file...</div>
+    </div>
+    
+    <div class="sync-prompt" id="syncPrompt">
+      <h3>Prepare deals for HubSpot?</h3>
+      <p style="font-size: 14px; color: #5f6368; margin-bottom: 16px;">
+        Would you like to prepare deals for export and upload to HubSpot now?
+      </p>
+      <button class="btn btn-primary" onclick="runSync()">Yes, Run Master Sync</button>
+      <button class="btn btn-secondary" onclick="closeAndFinish()">No, I'm Done</button>
+    </div>
+  </div>
+
+  <script>
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const loading = document.getElementById('loading');
+    const syncPrompt = document.getElementById('syncPrompt');
+    const fileInfo = document.getElementById('fileInfo');
+    
+    // Drag and drop handlers
+    uploadArea.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadArea.classList.add('dragging');
+    });
+    
+    uploadArea.addEventListener('dragleave', () => {
+      uploadArea.classList.remove('dragging');
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadArea.classList.remove('dragging');
+      
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        handleFile(files[0]);
+      }
+    });
+    
+    // File input change handler
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files.length > 0) {
+        handleFile(e.target.files[0]);
+      }
+    });
+    
+    function handleFile(file) {
+      // Validate file type
+      if (!file.name.match(/\.(xlsx|xls)$/i)) {
+        showStatus('Please select an Excel file (.xlsx or .xls)', 'error');
+        return;
+      }
+      
+      // Show file info
+      fileInfo.textContent = `Selected: ${file.name} (${formatFileSize(file.size)})`;
+      fileInfo.style.display = 'block';
+      
+      // Read file as base64
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64Data = e.target.result.split(',')[1];
+        uploadFile(base64Data, file.name);
+      };
+      reader.readAsDataURL(file);
+    }
+    
+    function uploadFile(base64Data, fileName) {
+      showStatus('', '');
+      loading.style.display = 'block';
+      uploadArea.style.display = 'none';
+      fileInfo.style.display = 'none';
+      
+      google.script.run
+        .withSuccessHandler(onUploadSuccess)
+        .withFailureHandler(onUploadError)
+        .processUploadedFile(base64Data, fileName);
+    }
+    
+    function onUploadSuccess(result) {
+      loading.style.display = 'none';
+      
+      if (result.success) {
+        showStatus(result.message, 'success');
+        syncPrompt.style.display = 'block';
+      } else {
+        showStatus(result.message, 'error');
+        resetUpload();
+      }
+    }
+    
+    function onUploadError(error) {
+      loading.style.display = 'none';
+      showStatus('Error: ' + error.message, 'error');
+      resetUpload();
+    }
+    
+    function runSync() {
+      showStatus('Running master sync...', 'info');
+      syncPrompt.style.display = 'none';
+      loading.style.display = 'block';
+      
+      google.script.run
+        .withSuccessHandler(onSyncSuccess)
+        .withFailureHandler(onSyncError)
+        .runMasterSync();
+    }
+    
+    function onSyncSuccess(result) {
+      loading.style.display = 'none';
+      
+      if (result.success) {
+        showStatus('✓ ' + result.message, 'success');
+        setTimeout(() => {
+          google.script.host.close();
+        }, 2000);
+      } else {
+        showStatus(result.message, 'error');
+      }
+    }
+    
+    function onSyncError(error) {
+      loading.style.display = 'none';
+      showStatus('Sync error: ' + error.message, 'error');
+    }
+    
+    function closeAndFinish() {
+      google.script.host.close();
+    }
+    
+    function showStatus(message, type) {
+      status.textContent = message;
+      status.className = 'status ' + type;
+      status.style.display = message ? 'block' : 'none';
+    }
+    
+    function resetUpload() {
+      uploadArea.style.display = 'block';
+      fileInput.value = '';
+      fileInfo.style.display = 'none';
+    }
+    
+    function formatFileSize(bytes) {
+      if (bytes === 0) return '0 Bytes';
+      const k = 1024;
+      const sizes = ['Bytes', 'KB', 'MB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    }
+  </script>
+</body>
+</html>
