@@ -67,13 +67,21 @@ export default function CallCard({ call, onDeepAnalyze }) {
         <div className="flex items-start justify-between gap-4">
           {/* Left: phone + meta */}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
+            {/* Phone number + customer name */}
+            <div className="flex items-center gap-2 flex-wrap mb-1">
               <span className="font-semibold text-gray-900 text-sm">
                 {call.caller_number || '—'}
               </span>
+              {call.customer_name && (
+                <span className="text-sm font-medium text-gray-700">— {call.customer_name}</span>
+              )}
               {call.handler_name && (
                 <span className="text-xs text-gray-500">• {call.handler_name}</span>
               )}
+            </div>
+
+            {/* Badges row */}
+            <div className="flex items-center gap-1.5 flex-wrap">
               {call.source && (
                 <Badge
                   value={call.source}
@@ -89,6 +97,23 @@ export default function CallCard({ call, onDeepAnalyze }) {
               {call.scheduled && (
                 <Badge value="Scheduled" colorClass="bg-green-100 text-green-800" />
               )}
+              {call.job_status && (
+                <Badge label="Albi:" value={call.job_status} colorClass="bg-slate-100 text-slate-700" />
+              )}
+              {call.contract_signed && (
+                <Badge value="Signed" colorClass="bg-emerald-100 text-emerald-800" />
+              )}
+              {call.albi_url && (
+                <a
+                  href={call.albi_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 hover:bg-indigo-200 transition-colors"
+                >
+                  🔗 Albi
+                </a>
+              )}
               {isDeep && (
                 <Badge value="Deep" colorClass="bg-purple-100 text-purple-800" />
               )}
@@ -97,7 +122,6 @@ export default function CallCard({ call, onDeepAnalyze }) {
             <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
               <span>{formatDate(call.call_date)}</span>
               <span>{formatDuration(call.duration_seconds)}</span>
-              {call.job_status && <span>Job: {call.job_status}</span>}
             </div>
           </div>
 
@@ -131,12 +155,15 @@ export default function CallCard({ call, onDeepAnalyze }) {
           </div>
 
           {/* Job info */}
-          {(call.job_id || call.job_type || call.job_status) && (
+          {(call.job_id || call.job_type || call.job_status || call.contract_signed) && (
             <div className="bg-white rounded-lg border border-gray-200 p-3 text-xs space-y-1">
-              <div className="font-medium text-gray-700 mb-1">Matched Job</div>
+              <div className="font-medium text-gray-700 mb-1">Albi Job</div>
               {call.job_id && <div><span className="text-gray-500">ID:</span> {call.job_id}</div>}
               {call.job_type && <div><span className="text-gray-500">Type:</span> {call.job_type}</div>}
               {call.job_status && <div><span className="text-gray-500">Status:</span> {call.job_status}</div>}
+              {call.contract_signed && (
+                <div><span className="text-gray-500">Contract Signed:</span> <span className="text-emerald-700 font-medium">{call.contract_signed}</span></div>
+              )}
             </div>
           )}
 

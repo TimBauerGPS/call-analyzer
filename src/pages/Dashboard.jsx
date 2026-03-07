@@ -34,6 +34,7 @@ export default function Dashboard({ session }) {
   const [fetchMessage, setFetchMessage] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const processingRef = useRef(false)
+  const hasAutoFetched = useRef(false)
 
   // Settings state
   const [userSettings, setUserSettings] = useState(null)
@@ -49,6 +50,19 @@ export default function Dashboard({ session }) {
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [settingsError, setSettingsError] = useState(null)
 
+  // Change password state
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordSaved, setPasswordSaved] = useState(false)
+  const [passwordError, setPasswordError] = useState(null)
+
+  // Auto-fetch on login (stored in localStorage, user-controlled)
+  const [autoFetch, setAutoFetch] = useState(() =>
+    localStorage.getItem('autoFetchOnLogin') === 'true'
+  )
+  const [showFetchPrompt, setShowFetchPrompt] = useState(false)
+
   // CSV metadata (persisted across page reloads via localStorage)
   const [csvRowCount, setCsvRowCount] = useState(() => {
     const s = localStorage.getItem('csvRowCount')
@@ -57,6 +71,7 @@ export default function Dashboard({ session }) {
   const [csvUploadedAt, setCsvUploadedAt] = useState(() =>
     localStorage.getItem('csvUploadedAt') || null
   )
+  const [csvMatchMessage, setCsvMatchMessage] = useState(null)
 
   // Are API keys configured?
   const keysConfigured = !!(
@@ -104,6 +119,20 @@ export default function Dashboard({ session }) {
     setSettingsLoaded(true)
   }
 
+  // Auto-fetch trigger: runs once after settings are loaded (if keys are configured)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!settingsLoaded || hasAutoFetched.current) return
+    if (!keysConfigured) return
+    if (autoFetch) {
+      hasAutoFetched.current = true
+      setShowFetchPrompt(false)
+      handleFetchCalls()
+    } else {
+      setShowFetchPrompt(true)
+    }
+  }, [settingsLoaded, keysConfigured])
+
   async function saveSettings() {
     setSettingsSaving(true)
     setSettingsError(null)
@@ -127,19 +156,98 @@ export default function Dashboard({ session }) {
     setSettingsSaving(false)
   }
 
+  async function changePassword() {
+    if (newPassword !== confirmPassword) {
+      setPasswordError('Passwords do not match')
+      return
+    }
+    if (newPassword.length < 8) {
+      setPasswordError('Password must be at least 8 characters')
+      return
+    }
+    setPasswordSaving(true)
+    setPasswordError(null)
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    if (error) {
+      setPasswordError(error.message)
+    } else {
+      setPasswordSaved(true)
+      setNewPassword('')
+      setConfirmPassword('')
+      setTimeout(() => setPasswordSaved(false), 3000)
+    }
+    setPasswordSaving(false)
+  }
+
+  function toggleAutoFetch(val) {
+    setAutoFetch(val)
+    localStorage.setItem('autoFetchOnLogin', String(val))
+  }
+
+  // --- Retroactively match all existing DB calls against newly uploaded CSV ---
+  async function retroactivelyMatchCSV(newJobMap) {
+    const { data: existingCalls, error } = await supabase
+      .from('calls')
+      .select('id, caller_number')
+    if (error || !existingCalls?.length) return 0
+
+    const toUpdate = existingCalls
+      .map(call => {
+        const phone = normalizePhone(call.caller_number)
+        const jobData = newJobMap.get(phone)
+        if (!jobData) return null
+        return { id: call.id, jobData }
+      })
+      .filter(Boolean)
+
+    if (!toUpdate.length) return 0
+
+    // Batch parallel updates
+    const BATCH = 10
+    for (let i = 0; i < toUpdate.length; i += BATCH) {
+      await Promise.all(
+        toUpdate.slice(i, i + BATCH).map(({ id, jobData }) =>
+          supabase.from('calls').update({
+            job_id: jobData.jobId || null,
+            job_type: jobData.jobType || null,
+            job_status: jobData.jobStatus || null,
+            customer_name: jobData.customerName || null,
+            albi_url: jobData.albiUrl || null,
+            contract_signed: jobData.contractSigned || null,
+          }).eq('id', id)
+        )
+      )
+    }
+
+    return toUpdate.length
+  }
+
   // --- CSV job data ---
-  function handleCSVLoaded({ jobMap, rowCount }) {
-    setJobMap(jobMap)
+  async function handleCSVLoaded({ jobMap: newJobMap, rowCount }) {
+    setJobMap(newJobMap)
     setCsvRowCount(rowCount || 0)
     const now = new Date().toISOString()
     setCsvUploadedAt(now)
     localStorage.setItem('csvUploadedAt', now)
     localStorage.setItem('csvRowCount', String(rowCount || 0))
+
+    // Retroactively match existing calls in DB
+    setCsvMatchMessage('Matching existing calls with Albi data…')
+    const matched = await retroactivelyMatchCSV(newJobMap)
+    setCsvMatchMessage(
+      matched > 0
+        ? `✓ Matched ${matched} existing call${matched === 1 ? '' : 's'} with Albi data`
+        : 'No existing calls matched Albi records'
+    )
+    setTimeout(() => setCsvMatchMessage(null), 6000)
+    await loadCalls()
   }
+
   function handleCSVClear() {
     setJobMap(null)
     setCsvRowCount(0)
     setCsvUploadedAt(null)
+    setCsvMatchMessage(null)
     localStorage.removeItem('csvUploadedAt')
     localStorage.removeItem('csvRowCount')
   }
@@ -161,6 +269,7 @@ export default function Dashboard({ session }) {
     processingRef.current = true
     setFetchStatus('fetching')
     setFetchMessage('Fetching calls from CallRail…')
+    setShowFetchPrompt(false)
 
     try {
       const { calls: rawCalls } = await apiFetch(
@@ -192,6 +301,9 @@ export default function Dashboard({ session }) {
           job_id: jobData.jobId || null,
           job_type: jobData.jobType || null,
           job_status: jobData.jobStatus || null,
+          customer_name: jobData.customerName || null,
+          albi_url: jobData.albiUrl || null,
+          contract_signed: jobData.contractSigned || null,
           // Attribution / PPC fields from CallRail
           utm_source: call.utm_source || null,
           utm_medium: call.utm_medium || null,
@@ -474,8 +586,29 @@ export default function Dashboard({ session }) {
               />
             </div>
 
-            {/* Save button */}
-            <div className="flex items-center gap-3 justify-end pt-1">
+            {/* Auto-fetch on login toggle */}
+            <div className="pt-2 border-t border-gray-100">
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fetch Behavior</h3>
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={autoFetch}
+                    onChange={e => toggleAutoFetch(e.target.checked)}
+                  />
+                  <div className={`w-9 h-5 rounded-full transition-colors ${autoFetch ? 'bg-brand-600' : 'bg-gray-300'}`} />
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoFetch ? 'translate-x-4' : ''}`} />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-800 font-medium">Auto-fetch calls on login</p>
+                  <p className="text-xs text-gray-500">Automatically fetch the last 7 days of calls whenever you sign in</p>
+                </div>
+              </label>
+            </div>
+
+            {/* Save API keys + prompt button */}
+            <div className="flex items-center gap-3 justify-end pt-1 border-t border-gray-100">
               {settingsError && <span className="text-xs text-red-600">{settingsError}</span>}
               {settingsSaved && <span className="text-xs text-green-600">✓ Saved</span>}
               <button
@@ -485,6 +618,44 @@ export default function Dashboard({ session }) {
               >
                 {settingsSaving ? 'Saving…' : 'Save Settings'}
               </button>
+            </div>
+
+            {/* Change Password section */}
+            <div className="pt-2 border-t border-gray-100 space-y-3">
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Change Password</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">New password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Min 8 characters"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Confirm password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {passwordError && <span className="text-xs text-red-600">{passwordError}</span>}
+                {passwordSaved && <span className="text-xs text-green-600">✓ Password updated</span>}
+                <button
+                  onClick={changePassword}
+                  disabled={passwordSaving || !newPassword}
+                  className="px-4 py-2 text-sm rounded-lg bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-50 font-medium ml-auto"
+                >
+                  {passwordSaving ? 'Updating…' : 'Update Password'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -503,6 +674,32 @@ export default function Dashboard({ session }) {
           </div>
         )}
 
+        {/* Auto-fetch prompt (shown on login when auto-fetch is off) */}
+        {showFetchPrompt && keysConfigured && !settingsOpen && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-blue-800">Fetch new calls?</p>
+              <p className="text-xs text-blue-600 mt-0.5">
+                Last 7 days · {dateRange.start} → {dateRange.end}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => { setShowFetchPrompt(false); handleFetchCalls() }}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Fetch Calls
+              </button>
+              <button
+                onClick={() => setShowFetchPrompt(false)}
+                className="text-xs text-blue-500 hover:text-blue-700"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Control bar */}
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
           <div>
@@ -516,6 +713,15 @@ export default function Dashboard({ session }) {
               onLoaded={handleCSVLoaded}
               onClear={handleCSVClear}
             />
+            {csvMatchMessage && (
+              <p className={`mt-2 text-xs px-3 py-1.5 rounded-lg border ${
+                csvMatchMessage.startsWith('✓')
+                  ? 'bg-green-50 border-green-200 text-green-700'
+                  : 'bg-blue-50 border-blue-200 text-blue-700'
+              }`}>
+                {csvMatchMessage}
+              </p>
+            )}
           </div>
 
           <div className="border-t border-gray-100" />
