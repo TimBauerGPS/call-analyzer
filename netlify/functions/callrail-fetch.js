@@ -22,6 +22,9 @@ export const handler = async (event) => {
     'id', 'start_time', 'duration', 'customer_phone_number',
     'source', 'source_name', 'recording', 'recording_player',
     'answered', 'direction',
+    // Attribution / PPC fields
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term',
+    'gclid', 'landing_page_url', 'referring_url',
   ].join(',')
 
   const url = new URL(`https://api.callrail.com/v3/a/${settings.callrail_account_id}/calls.json`)

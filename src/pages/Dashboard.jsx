@@ -192,6 +192,14 @@ export default function Dashboard({ session }) {
           job_id: jobData.jobId || null,
           job_type: jobData.jobType || null,
           job_status: jobData.jobStatus || null,
+          // Attribution / PPC fields from CallRail
+          utm_source: call.utm_source || null,
+          utm_medium: call.utm_medium || null,
+          utm_campaign: call.utm_campaign || null,
+          utm_term: call.utm_term || null,
+          gclid: call.gclid || null,
+          landing_page_url: call.landing_page_url || null,
+          referring_url: call.referring_url || null,
           analysis_status: 'pending',
         }
       })

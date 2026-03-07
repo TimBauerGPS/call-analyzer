@@ -205,6 +205,42 @@ export default function CallCard({ call, onDeepAnalyze }) {
             </div>
           )}
 
+          {/* Attribution / PPC */}
+          {(call.utm_term || call.utm_campaign || call.utm_medium || call.utm_source || call.gclid || call.landing_page_url) && (
+            <div className="bg-orange-50 rounded-lg border border-orange-200 p-3 text-xs space-y-1">
+              <div className="font-semibold text-orange-700 mb-1">Attribution</div>
+              {call.utm_term && (
+                <div><span className="text-orange-500">Search keyword:</span> <span className="text-gray-800 font-medium">{call.utm_term}</span></div>
+              )}
+              {call.utm_campaign && (
+                <div><span className="text-orange-500">Campaign:</span> <span className="text-gray-800">{call.utm_campaign}</span></div>
+              )}
+              {call.utm_medium && (
+                <div><span className="text-orange-500">Medium:</span> <span className="text-gray-800">{call.utm_medium}</span></div>
+              )}
+              {call.utm_source && (
+                <div><span className="text-orange-500">Source:</span> <span className="text-gray-800">{call.utm_source}</span></div>
+              )}
+              {call.gclid && (
+                <div className="flex items-center gap-1">
+                  <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">G</span>
+                  <span className="text-gray-600">Google Ads click confirmed</span>
+                </div>
+              )}
+              {call.landing_page_url && (
+                <div className="truncate">
+                  <span className="text-orange-500">Landing page:</span>{' '}
+                  <a href={call.landing_page_url} target="_blank" rel="noopener noreferrer"
+                    className="text-brand-600 hover:underline truncate"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {call.landing_page_url.replace(/^https?:\/\//, '')}
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Transcript */}
           {call.transcript && (
             <details className="group">
