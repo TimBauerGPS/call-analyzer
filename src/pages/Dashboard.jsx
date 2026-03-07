@@ -316,9 +316,13 @@ export default function Dashboard({ session }) {
         }
       })
 
+      // ignoreDuplicates: true — skip calls that already exist in the DB entirely.
+      // This prevents re-analyzing calls that are already complete or deep-analyzed,
+      // and preserves any existing transcript / deep analysis data.
+      // Only brand-new calls (not yet in the DB) are inserted and returned.
       const { data: upserted, error: upsertErr } = await supabase
         .from('calls')
-        .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: false })
+        .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
         .select()
 
       if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
