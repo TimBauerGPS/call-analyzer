@@ -3,6 +3,12 @@
   publish = "dist"
   functions = "netlify/functions"
 
+[build.environment]
+  # VITE_SUPABASE_ANON_KEY and VITE_SUPABASE_URL are Supabase's *public* keys —
+  # intentionally embedded in the browser bundle. Tell Netlify's secrets scanner
+  # to skip them so the build doesn't fail.
+  SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_ANON_KEY,VITE_SUPABASE_URL"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"
