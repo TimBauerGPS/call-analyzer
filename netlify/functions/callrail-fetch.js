@@ -20,7 +20,7 @@ export const handler = async (event) => {
 
   const fields = [
     'id', 'start_time', 'duration', 'customer_phone_number',
-    'tracking_source', 'recording', 'recording_player',
+    'source', 'source_name', 'recording', 'recording_player',
     'answered', 'direction',
   ].join(',')
 

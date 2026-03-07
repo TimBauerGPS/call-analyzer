@@ -187,7 +187,7 @@ export default function Dashboard({ session }) {
           caller_number: call.customer_phone_number,
           call_date: call.start_time,
           duration_seconds: call.duration,
-          source: call.tracking_source,
+          source: call.source_name || call.source || null,
           recording_url: callLink,
           job_id: jobData.jobId || null,
           job_type: jobData.jobType || null,
