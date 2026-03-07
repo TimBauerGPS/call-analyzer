@@ -18,7 +18,6 @@ function today() { return new Date().toISOString().slice(0, 10) }
 function daysAgo(n) {
   const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10)
 }
-
 function maskKey(key) {
   if (!key) return ''
   return key.slice(0, 6) + '••••••••' + key.slice(-4)
@@ -39,20 +38,30 @@ export default function Dashboard({ session }) {
   const [userSettings, setUserSettings] = useState(null)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   const [settingsForm, setSettingsForm] = useState({
-    callrail_api_key: '',
+    callrail_api_key:    '',
     callrail_account_id: '',
-    openai_api_key: '',
-    sales_tips_prompt: DEFAULT_SALES_TIPS,
-    company_id: '',      // UUID of the selected company
-    newCompanyName: '',  // text input when creating a new company
+    openai_api_key:      '',
+    sales_tips_prompt:   DEFAULT_SALES_TIPS,
   })
   const [showKey, setShowKey] = useState({ callrail: false, openai: false })
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [settingsSaved, setSettingsSaved] = useState(false)
   const [settingsError, setSettingsError] = useState(null)
 
-  // Companies list (for dropdown)
-  const [companies, setCompanies] = useState([])
+  // Company membership — loaded from company_members table
+  // { companyId, companyName, role: 'admin' | 'member' } | null
+  const [membership, setMembership] = useState(null)
+
+  // Team management (admin only)
+  const [teamMembers, setTeamMembers] = useState([])
+  const [teamLoading, setTeamLoading] = useState(false)
+  const [teamError, setTeamError] = useState(null)
+  const [newUserEmail, setNewUserEmail] = useState('')
+  const [newUserPassword, setNewUserPassword] = useState('')
+  const [addingUser, setAddingUser] = useState(false)
+  const [addUserError, setAddUserError] = useState(null)
+  const [addUserSuccess, setAddUserSuccess] = useState(null)
+  const [removingUserId, setRemovingUserId] = useState(null)
 
   // Change password state
   const [newPassword, setNewPassword] = useState('')
@@ -83,7 +92,8 @@ export default function Dashboard({ session }) {
     userSettings?.callrail_account_id &&
     userSettings?.openai_api_key
   )
-  const companyName = companies.find(c => c.id === userSettings?.company_id)?.name || null
+  const companyName = membership?.companyName || null
+  const isAdmin = membership?.role === 'admin'
 
   const authHeader = () => ({ Authorization: `Bearer ${session.access_token}` })
 
@@ -91,8 +101,15 @@ export default function Dashboard({ session }) {
   useEffect(() => {
     loadCalls()
     loadSettings()
-    loadCompanies()
+    loadMembership()
   }, [])
+
+  // Load team members once we know the user is an admin
+  useEffect(() => {
+    if (membership?.role === 'admin') {
+      loadTeamMembers()
+    }
+  }, [membership?.role])
 
   async function loadCalls() {
     const { data, error } = await supabase
@@ -103,12 +120,22 @@ export default function Dashboard({ session }) {
     if (!error) setCalls(data || [])
   }
 
-  async function loadCompanies() {
+  // Loads the user's company + role from company_members (joined to companies for the name).
+  // Uses the user's own JWT → subject to RLS (read own row only).
+  async function loadMembership() {
     const { data } = await supabase
-      .from('companies')
-      .select('id, name')
-      .order('name')
-    if (data) setCompanies(data)
+      .from('company_members')
+      .select('role, company_id, companies(name)')
+      .eq('user_id', session.user.id)
+      .single()
+
+    if (data) {
+      setMembership({
+        companyId:   data.company_id,
+        companyName: data.companies?.name || null,
+        role:        data.role,
+      })
+    }
   }
 
   async function loadSettings() {
@@ -120,17 +147,31 @@ export default function Dashboard({ session }) {
     if (data) {
       setUserSettings(data)
       setSettingsForm({
-        callrail_api_key: data.callrail_api_key || '',
+        callrail_api_key:    data.callrail_api_key    || '',
         callrail_account_id: data.callrail_account_id || '',
-        openai_api_key: data.openai_api_key || '',
-        sales_tips_prompt: data.sales_tips_prompt || DEFAULT_SALES_TIPS,
-        company_id: data.company_id || '',
-        newCompanyName: '',
+        openai_api_key:      data.openai_api_key      || '',
+        sales_tips_prompt:   data.sales_tips_prompt   || DEFAULT_SALES_TIPS,
       })
     } else {
       setSettingsOpen(true)
     }
     setSettingsLoaded(true)
+  }
+
+  // Calls the admin-list-users Netlify function (requires admin JWT + company membership).
+  async function loadTeamMembers() {
+    setTeamLoading(true)
+    setTeamError(null)
+    try {
+      const res = await fetch(API('admin-list-users'), { headers: authHeader() })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setTeamMembers(data.members || [])
+    } catch (err) {
+      setTeamError(err.message)
+    } finally {
+      setTeamLoading(false)
+    }
   }
 
   // Auto-fetch trigger: once after settings load
@@ -151,49 +192,12 @@ export default function Dashboard({ session }) {
     setSettingsSaving(true)
     setSettingsError(null)
 
-    // Handle new company creation
-    let companyId = settingsForm.company_id
-    if (settingsForm.company_id === 'new') {
-      const name = settingsForm.newCompanyName.trim()
-      if (!name) {
-        setSettingsError('Enter a company name.')
-        setSettingsSaving(false)
-        return
-      }
-      const { data: newCo, error: coErr } = await supabase
-        .from('companies')
-        .insert({ name })
-        .select('id, name')
-        .single()
-
-      if (coErr) {
-        // Unique constraint: company already exists — find and use it
-        const { data: existing } = await supabase
-          .from('companies')
-          .select('id, name')
-          .eq('name', name)
-          .single()
-        if (existing) {
-          companyId = existing.id
-          setCompanies(prev => prev.find(c => c.id === existing.id) ? prev : [...prev, existing].sort((a, b) => a.name.localeCompare(b.name)))
-        } else {
-          setSettingsError('Could not create company: ' + coErr.message)
-          setSettingsSaving(false)
-          return
-        }
-      } else {
-        companyId = newCo.id
-        setCompanies(prev => [...prev, newCo].sort((a, b) => a.name.localeCompare(b.name)))
-      }
-    }
-
     const { error } = await supabase.from('user_settings').upsert({
-      user_id: session.user.id,
-      callrail_api_key: settingsForm.callrail_api_key.trim(),
+      user_id:             session.user.id,
+      callrail_api_key:    settingsForm.callrail_api_key.trim(),
       callrail_account_id: settingsForm.callrail_account_id.trim(),
-      openai_api_key: settingsForm.openai_api_key.trim(),
-      sales_tips_prompt: settingsForm.sales_tips_prompt,
-      company_id: companyId || null,
+      openai_api_key:      settingsForm.openai_api_key.trim(),
+      sales_tips_prompt:   settingsForm.sales_tips_prompt,
     }, { onConflict: 'user_id' })
 
     if (!error) {
@@ -226,6 +230,54 @@ export default function Dashboard({ session }) {
     setPasswordSaving(false)
   }
 
+  // Creates a new user in the admin's company via the Netlify admin function.
+  async function addTeamMember() {
+    if (!newUserEmail.trim() || !newUserPassword.trim()) {
+      setAddUserError('Email and password are required.')
+      return
+    }
+    setAddingUser(true)
+    setAddUserError(null)
+    setAddUserSuccess(null)
+    try {
+      const res = await fetch(API('admin-create-user'), {
+        method: 'POST',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: newUserEmail.trim(), password: newUserPassword.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setAddUserSuccess(`✓ ${newUserEmail.trim()} added to your team`)
+      setNewUserEmail('')
+      setNewUserPassword('')
+      await loadTeamMembers()
+    } catch (err) {
+      setAddUserError(err.message)
+    } finally {
+      setAddingUser(false)
+    }
+  }
+
+  // Removes a user from the company (preserves auth account and call history).
+  async function removeTeamMember(userId) {
+    if (!window.confirm('Remove this user from your team?\n\nTheir account and call history are preserved — they just lose access.')) return
+    setRemovingUserId(userId)
+    try {
+      const res = await fetch(API('admin-remove-user'), {
+        method: 'DELETE',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      await loadTeamMembers()
+    } catch (err) {
+      setTeamError(err.message)
+    } finally {
+      setRemovingUserId(null)
+    }
+  }
+
   function toggleAutoFetch(val) {
     setAutoFetch(val)
     localStorage.setItem('autoFetchOnLogin', String(val))
@@ -254,11 +306,11 @@ export default function Dashboard({ session }) {
       await Promise.all(
         toUpdate.slice(i, i + BATCH).map(({ id, jobData }) =>
           supabase.from('calls').update({
-            job_id: jobData.jobId || null,
-            job_type: jobData.jobType || null,
-            job_status: jobData.jobStatus || null,
+            job_id:        jobData.jobId        || null,
+            job_type:      jobData.jobType      || null,
+            job_status:    jobData.jobStatus    || null,
             customer_name: jobData.customerName || null,
-            albi_url: jobData.albiUrl || null,
+            albi_url:      jobData.albiUrl      || null,
             contract_signed: jobData.contractSigned || null,
           }).eq('id', id)
         )
@@ -334,28 +386,28 @@ export default function Dashboard({ session }) {
         const jobData = jobMap?.get(phone) || {}
         const callLink = call.recording_player || `https://app.callrail.com/calls/${call.id}`
         return {
-          user_id: session.user.id,
-          company_id: userSettings?.company_id || null,
-          callrail_id: call.id,
-          caller_number: call.customer_phone_number,
-          call_date: call.start_time,
+          user_id:          session.user.id,
+          company_id:       membership?.companyId || null,
+          callrail_id:      call.id,
+          caller_number:    call.customer_phone_number,
+          call_date:        call.start_time,
           duration_seconds: call.duration,
-          source: call.source_name || call.source || null,
-          recording_url: callLink,
-          job_id: jobData.jobId || null,
-          job_type: jobData.jobType || null,
-          job_status: jobData.jobStatus || null,
-          customer_name: jobData.customerName || null,
-          albi_url: jobData.albiUrl || null,
-          contract_signed: jobData.contractSigned || null,
-          utm_source: call.utm_source || null,
-          utm_medium: call.utm_medium || null,
-          utm_campaign: call.utm_campaign || null,
-          utm_term: call.utm_term || null,
-          gclid: call.gclid || null,
+          source:           call.source_name || call.source || null,
+          recording_url:    callLink,
+          job_id:           jobData.jobId        || null,
+          job_type:         jobData.jobType      || null,
+          job_status:       jobData.jobStatus    || null,
+          customer_name:    jobData.customerName || null,
+          albi_url:         jobData.albiUrl      || null,
+          contract_signed:  jobData.contractSigned || null,
+          utm_source:       call.utm_source       || null,
+          utm_medium:       call.utm_medium       || null,
+          utm_campaign:     call.utm_campaign     || null,
+          utm_term:         call.utm_term         || null,
+          gclid:            call.gclid            || null,
           landing_page_url: call.landing_page_url || null,
-          referring_url: call.referring_url || null,
-          analysis_status: 'pending',
+          referring_url:    call.referring_url    || null,
+          analysis_status:  'pending',
         }
       })
 
@@ -418,21 +470,21 @@ export default function Dashboard({ session }) {
     })
     await supabase.from('calls').update({
       transcript,
-      handler_name: analysis.handlerName || null,
-      viable_lead: analysis.viableLead || null,
-      introduced: analysis.introduced ?? null,
-      scheduled: analysis.scheduled ?? null,
-      cb_requested: analysis.cbRequested ?? null,
-      notes: analysis.notes || null,
-      sales_tips: analysis.salesTips || null,
-      is_ppc: analysis.isPpc ?? null,
-      was_booked: analysis.wasBooked ?? null,
-      sentiment: analysis.sentiment || null,
+      handler_name:   analysis.handlerName   || null,
+      viable_lead:    analysis.viableLead    || null,
+      introduced:     analysis.introduced    ?? null,
+      scheduled:      analysis.scheduled     ?? null,
+      cb_requested:   analysis.cbRequested   ?? null,
+      notes:          analysis.notes         || null,
+      sales_tips:     analysis.salesTips     || null,
+      is_ppc:         analysis.isPpc         ?? null,
+      was_booked:     analysis.wasBooked     ?? null,
+      sentiment:      analysis.sentiment     || null,
       sentiment_score: analysis.sentimentScore ?? null,
-      coaching_tips: analysis.coachingTips || [],
-      missed_flags: analysis.missedFlags || [],
+      coaching_tips:  analysis.coachingTips  || [],
+      missed_flags:   analysis.missedFlags   || [],
       analysis_status: 'complete',
-      analysis_tier: 'standard',
+      analysis_tier:   'standard',
     }).eq('id', call.id)
   }
 
@@ -448,24 +500,24 @@ export default function Dashboard({ session }) {
         body: JSON.stringify({ audioUrl }),
       })
       const updates = {
-        transcript: analysis.transcript || call.transcript || null,
-        handler_name: analysis.handlerName || call.handler_name || null,
-        viable_lead: analysis.viableLead || call.viable_lead || null,
-        introduced: analysis.introduced ?? call.introduced ?? null,
-        scheduled: analysis.scheduled ?? call.scheduled ?? null,
-        cb_requested: analysis.cbRequested ?? call.cb_requested ?? null,
-        notes: analysis.notes || null,
-        sales_tips: analysis.salesTips || null,
-        is_ppc: analysis.isPpc ?? call.is_ppc ?? null,
-        was_booked: analysis.wasBooked ?? call.was_booked ?? null,
-        sentiment: analysis.sentiment || null,
-        sentiment_score: analysis.sentimentScore ?? null,
-        coaching_tips: analysis.coachingTips || [],
-        missed_flags: analysis.missedFlags || [],
-        tonal_feedback: analysis.tonalFeedback || null,
-        talk_time_ratio: analysis.talkTimeRatio || null,
+        transcript:      analysis.transcript      || call.transcript      || null,
+        handler_name:    analysis.handlerName     || call.handler_name    || null,
+        viable_lead:     analysis.viableLead      || call.viable_lead     || null,
+        introduced:      analysis.introduced      ?? call.introduced      ?? null,
+        scheduled:       analysis.scheduled       ?? call.scheduled       ?? null,
+        cb_requested:    analysis.cbRequested     ?? call.cb_requested    ?? null,
+        notes:           analysis.notes           || null,
+        sales_tips:      analysis.salesTips       || null,
+        is_ppc:          analysis.isPpc           ?? call.is_ppc          ?? null,
+        was_booked:      analysis.wasBooked       ?? call.was_booked      ?? null,
+        sentiment:       analysis.sentiment       || null,
+        sentiment_score: analysis.sentimentScore  ?? null,
+        coaching_tips:   analysis.coachingTips    || [],
+        missed_flags:    analysis.missedFlags     || [],
+        tonal_feedback:  analysis.tonalFeedback   || null,
+        talk_time_ratio: analysis.talkTimeRatio   || null,
         analysis_status: 'complete',
-        analysis_tier: 'deep',
+        analysis_tier:   'deep',
       }
       await supabase.from('calls').update(updates).eq('id', call.id)
       setCalls(prev => prev.map(c => c.id === call.id ? { ...c, ...updates } : c))
@@ -505,6 +557,11 @@ export default function Dashboard({ session }) {
             )}
             <span className="text-gray-300 text-xs">|</span>
             <span className="text-xs text-gray-500">{session.user.email}</span>
+            {isAdmin && (
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                Admin
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {!keysConfigured && (
@@ -532,7 +589,7 @@ export default function Dashboard({ session }) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* Settings panel */}
+        {/* ── Settings panel ──────────────────────────────────── */}
         {settingsOpen && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
             <div className="flex items-center justify-between">
@@ -544,49 +601,11 @@ export default function Dashboard({ session }) {
               )}
             </div>
 
-            {/* Team / Company */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Team / Company</h3>
-              <p className="text-xs text-gray-500">
-                Selecting a company lets multiple team members share the same call data. Everyone on the same company sees the same calls.
-              </p>
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">Company</label>
-                <select
-                  value={settingsForm.company_id}
-                  onChange={e => setSettingsForm(f => ({ ...f, company_id: e.target.value, newCompanyName: '' }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                >
-                  <option value="">— Private account (no company) —</option>
-                  {companies.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                  <option value="new">＋ Add new company…</option>
-                </select>
-              </div>
-              {settingsForm.company_id === 'new' && (
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">New company name</label>
-                  <input
-                    type="text"
-                    value={settingsForm.newCompanyName}
-                    onChange={e => setSettingsForm(f => ({ ...f, newCompanyName: e.target.value }))}
-                    placeholder="e.g. Allied Restoration Services"
-                    autoFocus
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <p className="mt-1 text-xs text-gray-400">
-                    This name will appear in the company dropdown for all team members.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* API Keys section */}
-            <div className="space-y-4 pt-2 border-t border-gray-100">
+            {/* API Keys */}
+            <div className="space-y-4">
               <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">API Keys</h3>
               <p className="text-xs text-gray-500">
-                Your keys are stored securely in your account and used server-side only — they are never exposed to the browser after saving.
+                Your keys are stored securely and used server-side only — they are never exposed to the browser after saving.
               </p>
 
               {/* CallRail API Key */}
@@ -598,7 +617,7 @@ export default function Dashboard({ session }) {
                     value={settingsForm.callrail_api_key}
                     onChange={e => setSettingsForm(f => ({ ...f, callrail_api_key: e.target.value }))}
                     placeholder="Enter your CallRail API key"
-                    className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                   <button type="button" onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
@@ -606,7 +625,7 @@ export default function Dashboard({ session }) {
                   </button>
                 </div>
                 {userSettings?.callrail_api_key && (
-                  <p className="mt-1 text-xs text-gray-400">Currently saved: {maskKey(userSettings.callrail_api_key)}</p>
+                  <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.callrail_api_key)}</p>
                 )}
               </div>
 
@@ -632,7 +651,7 @@ export default function Dashboard({ session }) {
                     value={settingsForm.openai_api_key}
                     onChange={e => setSettingsForm(f => ({ ...f, openai_api_key: e.target.value }))}
                     placeholder="sk-..."
-                    className="w-full px-3 py-2 pr-20 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                   <button type="button" onClick={() => setShowKey(k => ({ ...k, openai: !k.openai }))}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
@@ -640,11 +659,9 @@ export default function Dashboard({ session }) {
                   </button>
                 </div>
                 {userSettings?.openai_api_key && (
-                  <p className="mt-1 text-xs text-gray-400">Currently saved: {maskKey(userSettings.openai_api_key)}</p>
+                  <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.openai_api_key)}</p>
                 )}
-                <p className="mt-1 text-xs text-gray-400">
-                  One key covers both Whisper transcription and GPT-4o analysis.
-                </p>
+                <p className="mt-1 text-xs text-gray-400">Covers both Whisper transcription and GPT-4o analysis.</p>
               </div>
             </div>
 
@@ -672,7 +689,7 @@ export default function Dashboard({ session }) {
                 </div>
                 <div>
                   <p className="text-sm text-gray-800 font-medium">Auto-fetch calls on login</p>
-                  <p className="text-xs text-gray-500">Automatically fetch the last 7 days of calls whenever you sign in</p>
+                  <p className="text-xs text-gray-500">Automatically fetch the last 7 days whenever you sign in</p>
                 </div>
               </label>
             </div>
@@ -713,6 +730,116 @@ export default function Dashboard({ session }) {
                 </button>
               </div>
             </div>
+
+            {/* ── Team Management (admin only) ─────────────────── */}
+            {isAdmin && (
+              <div className="pt-2 border-t border-gray-100 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                    Team Management
+                  </h3>
+                  {companyName && (
+                    <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                      {companyName}
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  Users you add here are locked into <strong>{companyName || 'your company'}</strong>. They can view, filter, and deep-analyze calls but cannot access any other company's data.
+                </p>
+
+                {/* Current members list */}
+                {teamLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                    <span className="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full" />
+                    Loading team…
+                  </div>
+                ) : teamError ? (
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-red-600 flex-1">{teamError}</p>
+                    <button onClick={loadTeamMembers} className="text-xs text-gray-500 hover:text-gray-700 underline">
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    {teamMembers.map(member => (
+                      <div key={member.id}
+                        className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-gray-50 border border-gray-100">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm text-gray-800 truncate">{member.email}</span>
+                          {member.isCurrentUser && (
+                            <span className="text-xs text-gray-400 flex-shrink-0">(you)</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                            member.role === 'admin'
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {member.role}
+                          </span>
+                          {!member.isCurrentUser && (
+                            <button
+                              onClick={() => removeTeamMember(member.id)}
+                              disabled={removingUserId === member.id}
+                              className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 transition-colors"
+                            >
+                              {removingUserId === member.id ? 'Removing…' : 'Remove'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {teamMembers.length === 0 && (
+                      <p className="text-xs text-gray-400 italic py-2">No team members yet — add one below.</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Add new team member */}
+                <div className="pt-3 border-t border-gray-100 space-y-3">
+                  <h4 className="text-xs font-semibold text-gray-700">Add Team Member</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Email address</label>
+                      <input
+                        type="email"
+                        value={newUserEmail}
+                        onChange={e => { setNewUserEmail(e.target.value); setAddUserError(null); setAddUserSuccess(null) }}
+                        onKeyDown={e => e.key === 'Enter' && addTeamMember()}
+                        placeholder="employee@company.com"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Temporary password</label>
+                      <input
+                        type="text"
+                        value={newUserPassword}
+                        onChange={e => { setNewUserPassword(e.target.value); setAddUserError(null); setAddUserSuccess(null) }}
+                        onKeyDown={e => e.key === 'Enter' && addTeamMember()}
+                        placeholder="Min 8 characters"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {addUserError && <span className="text-xs text-red-600 flex-1">{addUserError}</span>}
+                    {addUserSuccess && <span className="text-xs text-green-600 flex-1">{addUserSuccess}</span>}
+                    <button
+                      onClick={addTeamMember}
+                      disabled={addingUser || !newUserEmail || !newUserPassword}
+                      className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 font-medium ml-auto transition-colors"
+                    >
+                      {addingUser ? 'Adding…' : 'Add User'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
