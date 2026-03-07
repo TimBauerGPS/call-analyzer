@@ -627,6 +627,19 @@ export default function Dashboard({ session }) {
                 {userSettings?.callrail_api_key && (
                   <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.callrail_api_key)}</p>
                 )}
+                <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="text-xs font-medium text-gray-600">How to find your CallRail API Key:</p>
+                  <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5 mt-1">
+                    <li>
+                      Log in to{' '}
+                      <a href="https://app.callrail.com" target="_blank" rel="noreferrer"
+                        className="text-brand-600 hover:underline">app.callrail.com</a>
+                    </li>
+                    <li>Click <strong>Integrations</strong> in the left sidebar</li>
+                    <li>Click <strong>Create API V3 Key</strong></li>
+                    <li>Copy and paste the key above — <strong>it's only visible for 15 minutes</strong></li>
+                  </ol>
+                </div>
               </div>
 
               {/* CallRail Account ID */}
@@ -639,7 +652,14 @@ export default function Dashboard({ session }) {
                   placeholder="e.g. 123456789"
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
-                <p className="mt-1 text-xs text-gray-400">CallRail → Settings → API → Account ID</p>
+                <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="text-xs font-medium text-gray-600">How to find your Account ID:</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    While logged into CallRail, look at the URL in your browser. Your Account ID is the
+                    number after <code className="bg-gray-100 px-1 rounded">/a/</code> — for example:<br />
+                    <span className="font-mono text-gray-600">app.callrail.com/…/a/<strong className="text-brand-700">123456789</strong>/…</span>
+                  </p>
+                </div>
               </div>
 
               {/* OpenAI API Key */}
@@ -661,7 +681,23 @@ export default function Dashboard({ session }) {
                 {userSettings?.openai_api_key && (
                   <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.openai_api_key)}</p>
                 )}
-                <p className="mt-1 text-xs text-gray-400">Covers both Whisper transcription and GPT-4o analysis.</p>
+                <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
+                  <p className="text-xs font-medium text-gray-600">How to get your OpenAI API Key:</p>
+                  <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5 mt-1">
+                    <li>
+                      Visit{' '}
+                      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer"
+                        className="text-brand-600 hover:underline">platform.openai.com/api-keys</a>
+                    </li>
+                    <li>Log in (create an account if needed)</li>
+                    <li>Click <strong>+ Create new secret key</strong>, give it a name, click <strong>Create secret key</strong></li>
+                    <li>Copy the key and paste it above — it won't be shown again</li>
+                    <li>Go to <strong>Billing</strong> and add a credit card. $10 covers hundreds of calls.</li>
+                  </ol>
+                  <p className="text-xs text-gray-400 mt-1.5 border-t border-gray-200 pt-1.5">
+                    Standard analysis: ~$0.007/min · Deep tonal analysis: ~$0.04–$0.06/min
+                  </p>
+                </div>
               </div>
             </div>
 
