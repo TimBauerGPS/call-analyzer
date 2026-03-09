@@ -687,8 +687,8 @@ export default function Dashboard({ session }) {
                   <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5 mt-1">
                     <li>
                       Log in to{' '}
-                      <a href="https://app.callrail.com" target="_blank" rel="noreferrer"
-                        className="text-brand-600 hover:underline">app.callrail.com</a>
+                      <a href="https://sociusmarketing.callreports.com/authenticate/" target="_blank" rel="noreferrer"
+                        className="text-brand-600 hover:underline">sociusmarketing.callreports.com</a>
                     </li>
                     <li>Click <strong>Integrations</strong> in the left sidebar</li>
                     <li>Click <strong>Create API V3 Key</strong></li>
@@ -710,9 +710,9 @@ export default function Dashboard({ session }) {
                 <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
                   <p className="text-xs font-medium text-gray-600">How to find your Account ID:</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    While logged into CallRail, look at the URL in your browser. Your Account ID is the
+                    While logged in, look at the URL in your browser. Your Account ID is the
                     number after <code className="bg-gray-100 px-1 rounded">/a/</code> — for example:<br />
-                    <span className="font-mono text-gray-600">app.callrail.com/…/a/<strong className="text-brand-700">123456789</strong>/…</span>
+                    <span className="font-mono text-gray-600">sociusmarketing.callreports.com/analytics/a/<strong className="text-brand-700">123456789</strong>/</span>
                   </p>
                 </div>
               </div>
