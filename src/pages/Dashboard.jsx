@@ -64,6 +64,7 @@ export default function Dashboard({ session }) {
   const [newUserCompanyId, setNewUserCompanyId] = useState('')   // super admin only
   const [newUserCompanyName, setNewUserCompanyName] = useState('') // super admin: new company name
   const [newUserRole, setNewUserRole] = useState('member')         // super admin only
+  const [addMode, setAddMode] = useState('new')             // 'new' | 'existing'
   const [addingUser, setAddingUser] = useState(false)
   const [addUserError, setAddUserError] = useState(null)
   const [addUserSuccess, setAddUserSuccess] = useState(null)
@@ -252,8 +253,12 @@ export default function Dashboard({ session }) {
   }
 
   async function addTeamMember() {
-    if (!newUserEmail.trim() || !newUserPassword.trim()) {
-      setAddUserError('Email and password are required.')
+    if (!newUserEmail.trim()) {
+      setAddUserError('Email is required.')
+      return
+    }
+    if (addMode === 'new' && !newUserPassword.trim()) {
+      setAddUserError('Password is required for new users.')
       return
     }
     if (isSuperAdmin) {
@@ -266,7 +271,8 @@ export default function Dashboard({ session }) {
     setAddUserError(null)
     setAddUserSuccess(null)
     try {
-      const body = { email: newUserEmail.trim(), password: newUserPassword.trim() }
+      const body = { email: newUserEmail.trim() }
+      if (addMode === 'new') body.password = newUserPassword.trim()
       if (isSuperAdmin) {
         body.role = newUserRole
         if (newUserCompanyId === 'new') {
@@ -275,7 +281,8 @@ export default function Dashboard({ session }) {
           body.companyId = newUserCompanyId
         }
       }
-      const res = await fetch(API('admin-create-user'), {
+      const endpoint = addMode === 'existing' ? 'admin-add-existing-user' : 'admin-create-user'
+      const res = await fetch(API(endpoint), {
         method: 'POST',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -922,7 +929,29 @@ export default function Dashboard({ session }) {
 
                 {/* ── Add User form ── */}
                 <div className="pt-3 border-t border-gray-100 space-y-3">
-                  <h4 className="text-xs font-semibold text-gray-700">Add Team Member</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold text-gray-700">Add Team Member</h4>
+                    {/* Toggle: new account vs existing Supabase user */}
+                    <div className="flex rounded-lg overflow-hidden border border-gray-300 text-xs">
+                      <button
+                        onClick={() => { setAddMode('new'); setAddUserError(null); setAddUserSuccess(null) }}
+                        className={`px-3 py-1 font-medium transition-colors ${addMode === 'new' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                      >
+                        New account
+                      </button>
+                      <button
+                        onClick={() => { setAddMode('existing'); setAddUserError(null); setAddUserSuccess(null) }}
+                        className={`px-3 py-1 font-medium transition-colors ${addMode === 'existing' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                      >
+                        Existing user
+                      </button>
+                    </div>
+                  </div>
+                  {addMode === 'existing' && (
+                    <p className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                      Grant access to someone who already has an account on this Supabase project (e.g. registered via another app).
+                    </p>
+                  )}
 
                   {/* Super admin extras: company selector + role */}
                   {isSuperAdmin && (
@@ -965,8 +994,8 @@ export default function Dashboard({ session }) {
                     </div>
                   )}
 
-                  {/* Email + password (both roles) */}
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* Email + password */}
+                  <div className={`grid gap-3 ${addMode === 'new' ? 'grid-cols-2' : 'grid-cols-1'}`}>
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">Email address</label>
                       <input
@@ -978,27 +1007,29 @@ export default function Dashboard({ session }) {
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Temporary password</label>
-                      <input
-                        type="text"
-                        value={newUserPassword}
-                        onChange={e => { setNewUserPassword(e.target.value); setAddUserError(null); setAddUserSuccess(null) }}
-                        onKeyDown={e => e.key === 'Enter' && addTeamMember()}
-                        placeholder="Min 8 characters"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </div>
+                    {addMode === 'new' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Temporary password</label>
+                        <input
+                          type="text"
+                          value={newUserPassword}
+                          onChange={e => { setNewUserPassword(e.target.value); setAddUserError(null); setAddUserSuccess(null) }}
+                          onKeyDown={e => e.key === 'Enter' && addTeamMember()}
+                          placeholder="Min 8 characters"
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     {addUserError && <span className="text-xs text-red-600 flex-1">{addUserError}</span>}
                     {addUserSuccess && <span className="text-xs text-green-600 flex-1">{addUserSuccess}</span>}
                     <button
                       onClick={addTeamMember}
-                      disabled={addingUser || !newUserEmail || !newUserPassword}
+                      disabled={addingUser || !newUserEmail || (addMode === 'new' && !newUserPassword)}
                       className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 font-medium ml-auto transition-colors"
                     >
-                      {addingUser ? 'Adding…' : 'Add User'}
+                      {addingUser ? 'Adding…' : addMode === 'existing' ? 'Grant Access' : 'Add User'}
                     </button>
                   </div>
                 </div>
