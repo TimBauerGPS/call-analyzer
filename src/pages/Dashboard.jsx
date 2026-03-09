@@ -51,13 +51,19 @@ export default function Dashboard({ session }) {
   // Company membership — loaded from company_members table
   // { companyId, companyName, role: 'admin' | 'member' } | null
   const [membership, setMembership] = useState(null)
+  // True if this user is in the super_admins table (cross-company management)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   // Team management (admin only)
-  const [teamMembers, setTeamMembers] = useState([])
+  const [teamMembers, setTeamMembers] = useState([])        // regular admin: flat list
+  const [allCompanies, setAllCompanies] = useState([])      // super admin: [{ id, name, members }]
   const [teamLoading, setTeamLoading] = useState(false)
   const [teamError, setTeamError] = useState(null)
   const [newUserEmail, setNewUserEmail] = useState('')
   const [newUserPassword, setNewUserPassword] = useState('')
+  const [newUserCompanyId, setNewUserCompanyId] = useState('')   // super admin only
+  const [newUserCompanyName, setNewUserCompanyName] = useState('') // super admin: new company name
+  const [newUserRole, setNewUserRole] = useState('member')         // super admin only
   const [addingUser, setAddingUser] = useState(false)
   const [addUserError, setAddUserError] = useState(null)
   const [addUserSuccess, setAddUserSuccess] = useState(null)
@@ -93,7 +99,7 @@ export default function Dashboard({ session }) {
     userSettings?.openai_api_key
   )
   const companyName = membership?.companyName || null
-  const isAdmin = membership?.role === 'admin'
+  const isAdmin = membership?.role === 'admin' || isSuperAdmin
 
   const authHeader = () => ({ Authorization: `Bearer ${session.access_token}` })
 
@@ -104,12 +110,12 @@ export default function Dashboard({ session }) {
     loadMembership()
   }, [])
 
-  // Load team members once we know the user is an admin
+  // Load team members once we know the user is an admin or super admin
   useEffect(() => {
-    if (membership?.role === 'admin') {
+    if (membership?.role === 'admin' || isSuperAdmin) {
       loadTeamMembers()
     }
-  }, [membership?.role])
+  }, [membership?.role, isSuperAdmin])
 
   async function loadCalls() {
     const { data, error } = await supabase
@@ -120,21 +126,32 @@ export default function Dashboard({ session }) {
     if (!error) setCalls(data || [])
   }
 
-  // Loads the user's company + role from company_members (joined to companies for the name).
-  // Uses the user's own JWT → subject to RLS (read own row only).
+  // Loads company membership + super admin status in parallel.
+  // Both tables use RLS so each user can only read their own row.
   async function loadMembership() {
-    const { data } = await supabase
-      .from('company_members')
-      .select('role, company_id, companies(name)')
-      .eq('user_id', session.user.id)
-      .single()
+    const [memberResult, saResult] = await Promise.all([
+      supabase
+        .from('company_members')
+        .select('role, company_id, companies(name)')
+        .eq('user_id', session.user.id)
+        .single(),
+      supabase
+        .from('super_admins')
+        .select('user_id')
+        .eq('user_id', session.user.id)
+        .single(),
+    ])
 
-    if (data) {
+    if (memberResult.data) {
       setMembership({
-        companyId:   data.company_id,
-        companyName: data.companies?.name || null,
-        role:        data.role,
+        companyId:   memberResult.data.company_id,
+        companyName: memberResult.data.companies?.name || null,
+        role:        memberResult.data.role,
       })
+    }
+
+    if (saResult.data) {
+      setIsSuperAdmin(true)
     }
   }
 
@@ -158,7 +175,6 @@ export default function Dashboard({ session }) {
     setSettingsLoaded(true)
   }
 
-  // Calls the admin-list-users Netlify function (requires admin JWT + company membership).
   async function loadTeamMembers() {
     setTeamLoading(true)
     setTeamError(null)
@@ -166,7 +182,12 @@ export default function Dashboard({ session }) {
       const res = await fetch(API('admin-list-users'), { headers: authHeader() })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-      setTeamMembers(data.members || [])
+      if (data.isSuperAdmin) {
+        setIsSuperAdmin(true)
+        setAllCompanies(data.companies || [])
+      } else {
+        setTeamMembers(data.members || [])
+      }
     } catch (err) {
       setTeamError(err.message)
     } finally {
@@ -230,26 +251,48 @@ export default function Dashboard({ session }) {
     setPasswordSaving(false)
   }
 
-  // Creates a new user in the admin's company via the Netlify admin function.
   async function addTeamMember() {
     if (!newUserEmail.trim() || !newUserPassword.trim()) {
       setAddUserError('Email and password are required.')
       return
     }
+    if (isSuperAdmin) {
+      if (!newUserCompanyId) { setAddUserError('Select a company for this user.'); return }
+      if (newUserCompanyId === 'new' && !newUserCompanyName.trim()) {
+        setAddUserError('Enter a name for the new company.'); return
+      }
+    }
     setAddingUser(true)
     setAddUserError(null)
     setAddUserSuccess(null)
     try {
+      const body = { email: newUserEmail.trim(), password: newUserPassword.trim() }
+      if (isSuperAdmin) {
+        body.role = newUserRole
+        if (newUserCompanyId === 'new') {
+          body.newCompanyName = newUserCompanyName.trim()
+        } else {
+          body.companyId = newUserCompanyId
+        }
+      }
       const res = await fetch(API('admin-create-user'), {
         method: 'POST',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: newUserEmail.trim(), password: newUserPassword.trim() }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
-      setAddUserSuccess(`✓ ${newUserEmail.trim()} added to your team`)
+      const destName = isSuperAdmin
+        ? (newUserCompanyId === 'new'
+            ? newUserCompanyName.trim()
+            : allCompanies.find(c => c.id === newUserCompanyId)?.name || 'the company')
+        : (companyName || 'your team')
+      setAddUserSuccess(`✓ ${newUserEmail.trim()} added to ${destName}`)
       setNewUserEmail('')
       setNewUserPassword('')
+      setNewUserCompanyId('')
+      setNewUserCompanyName('')
+      setNewUserRole('member')
       await loadTeamMembers()
     } catch (err) {
       setAddUserError(err.message)
@@ -258,15 +301,16 @@ export default function Dashboard({ session }) {
     }
   }
 
-  // Removes a user from the company (preserves auth account and call history).
-  async function removeTeamMember(userId) {
-    if (!window.confirm('Remove this user from your team?\n\nTheir account and call history are preserved — they just lose access.')) return
+  // Removes a user from a company. Super admin passes companyId explicitly.
+  async function removeTeamMember(userId, targetCompanyId) {
+    if (!window.confirm('Remove this user from the company?\n\nTheir account and call history are preserved — they just lose access.')) return
     setRemovingUserId(userId)
     try {
+      const body = isSuperAdmin ? { userId, companyId: targetCompanyId } : { userId }
       const res = await fetch(API('admin-remove-user'), {
         method: 'DELETE',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -557,11 +601,15 @@ export default function Dashboard({ session }) {
             )}
             <span className="text-gray-300 text-xs">|</span>
             <span className="text-xs text-gray-500">{session.user.email}</span>
-            {isAdmin && (
+            {isSuperAdmin ? (
+              <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                Super Admin
+              </span>
+            ) : isAdmin ? (
               <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
                 Admin
               </span>
-            )}
+            ) : null}
           </div>
           <div className="flex items-center gap-2">
             {!keysConfigured && (
@@ -767,25 +815,25 @@ export default function Dashboard({ session }) {
               </div>
             </div>
 
-            {/* ── Team Management (admin only) ─────────────────── */}
+            {/* ── Team Management (admin / super admin only) ───────── */}
             {isAdmin && (
               <div className="pt-2 border-t border-gray-100 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                     Team Management
                   </h3>
-                  {companyName && (
+                  {isSuperAdmin ? (
+                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
+                      Super Admin
+                    </span>
+                  ) : companyName ? (
                     <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
                       {companyName}
                     </span>
-                  )}
+                  ) : null}
                 </div>
 
-                <p className="text-xs text-gray-500">
-                  Users you add here are locked into <strong>{companyName || 'your company'}</strong>. They can view, filter, and deep-analyze calls but cannot access any other company's data.
-                </p>
-
-                {/* Current members list */}
+                {/* Loading / error state */}
                 {teamLoading ? (
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <span className="animate-spin inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full" />
@@ -794,32 +842,69 @@ export default function Dashboard({ session }) {
                 ) : teamError ? (
                   <div className="flex items-center gap-2">
                     <p className="text-xs text-red-600 flex-1">{teamError}</p>
-                    <button onClick={loadTeamMembers} className="text-xs text-gray-500 hover:text-gray-700 underline">
-                      Retry
-                    </button>
+                    <button onClick={loadTeamMembers} className="text-xs text-gray-500 hover:text-gray-700 underline">Retry</button>
+                  </div>
+                ) : isSuperAdmin ? (
+                  /* ── Super admin: all companies ── */
+                  <div className="space-y-4">
+                    {allCompanies.length === 0 && (
+                      <p className="text-xs text-gray-400 italic">No companies yet — create one below.</p>
+                    )}
+                    {allCompanies.map(company => (
+                      <div key={company.id} className="rounded-lg border border-gray-200 overflow-hidden">
+                        <div className="bg-gray-100 px-3 py-2 flex items-center justify-between">
+                          <span className="text-xs font-semibold text-gray-700">{company.name}</span>
+                          <span className="text-xs text-gray-400">{company.members.length} member{company.members.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                          {company.members.length === 0 ? (
+                            <p className="text-xs text-gray-400 italic px-3 py-2">No members yet.</p>
+                          ) : company.members.map(member => (
+                            <div key={member.id} className="flex items-center justify-between px-3 py-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-sm text-gray-800 truncate">{member.email}</span>
+                                {member.isCurrentUser && <span className="text-xs text-gray-400 flex-shrink-0">(you)</span>}
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                  member.role === 'admin' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                                }`}>{member.role}</span>
+                                {!member.isCurrentUser && (
+                                  <button
+                                    onClick={() => removeTeamMember(member.id, company.id)}
+                                    disabled={removingUserId === member.id}
+                                    className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40"
+                                  >
+                                    {removingUserId === member.id ? 'Removing…' : 'Remove'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
+                  /* ── Regular admin: own company only ── */
                   <div className="space-y-1.5">
+                    <p className="text-xs text-gray-500">
+                      Users are locked into <strong>{companyName || 'your company'}</strong> and cannot access any other company's data.
+                    </p>
                     {teamMembers.map(member => (
                       <div key={member.id}
                         className="flex items-center justify-between py-2.5 px-3 rounded-lg bg-gray-50 border border-gray-100">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-sm text-gray-800 truncate">{member.email}</span>
-                          {member.isCurrentUser && (
-                            <span className="text-xs text-gray-400 flex-shrink-0">(you)</span>
-                          )}
+                          {member.isCurrentUser && <span className="text-xs text-gray-400 flex-shrink-0">(you)</span>}
                         </div>
                         <div className="flex items-center gap-3 flex-shrink-0">
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            member.role === 'admin'
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-gray-100 text-gray-600'
-                          }`}>
-                            {member.role}
-                          </span>
+                            member.role === 'admin' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'
+                          }`}>{member.role}</span>
                           {!member.isCurrentUser && (
                             <button
-                              onClick={() => removeTeamMember(member.id)}
+                              onClick={() => removeTeamMember(member.id, null)}
                               disabled={removingUserId === member.id}
                               className="text-xs text-red-500 hover:text-red-700 disabled:opacity-40 transition-colors"
                             >
@@ -835,9 +920,52 @@ export default function Dashboard({ session }) {
                   </div>
                 )}
 
-                {/* Add new team member */}
+                {/* ── Add User form ── */}
                 <div className="pt-3 border-t border-gray-100 space-y-3">
                   <h4 className="text-xs font-semibold text-gray-700">Add Team Member</h4>
+
+                  {/* Super admin extras: company selector + role */}
+                  {isSuperAdmin && (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Company</label>
+                        <select
+                          value={newUserCompanyId}
+                          onChange={e => { setNewUserCompanyId(e.target.value); setNewUserCompanyName(''); setAddUserError(null) }}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">— Select company —</option>
+                          {allCompanies.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                          <option value="new">＋ New company…</option>
+                        </select>
+                        {newUserCompanyId === 'new' && (
+                          <input
+                            type="text"
+                            value={newUserCompanyName}
+                            onChange={e => setNewUserCompanyName(e.target.value)}
+                            placeholder="Company name"
+                            autoFocus
+                            className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+                        <select
+                          value={newUserRole}
+                          onChange={e => setNewUserRole(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="member">Member — view &amp; analyze calls</option>
+                          <option value="admin">Admin — manage their company's team</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Email + password (both roles) */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">Email address</label>

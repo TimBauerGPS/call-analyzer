@@ -1,17 +1,14 @@
 /**
  * admin-remove-user.js
  *
- * Removes a user from the caller's company by deleting their company_members row.
- * The auth user and their call history are preserved — they simply lose access
- * to the company's calls.
+ * Removes a user from a company by deleting their company_members row.
+ * The auth user and their call history are preserved.
  *
- * Security:
- *  - Caller must be an admin in company_members
- *  - Caller cannot remove themselves
- *  - Target must be in the same company as the caller
+ * SUPER ADMIN: must supply both userId and companyId (can remove from any company)
+ * COMPANY ADMIN: must supply userId; companyId is inferred from their own membership
  *
  * DELETE /.netlify/functions/admin-remove-user
- * Body: { userId: string }
+ * Body: { userId: string, companyId?: string }
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -30,7 +27,7 @@ export async function handler(event) {
 
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    return jsonResponse(500, { error: 'Server misconfiguration: missing Supabase credentials.' })
+    return jsonResponse(500, { error: 'Server misconfiguration.' })
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -43,57 +40,54 @@ export async function handler(event) {
     return jsonResponse(401, { error: 'Unauthorized: invalid or expired session.' })
   }
 
-  // ── Verify caller is an admin ───────────────────────────────
-  const { data: callerMembership, error: callerError } = await supabase
-    .from('company_members')
-    .select('company_id, role')
-    .eq('user_id', user.id)
-    .single()
-
-  if (callerError || !callerMembership) {
-    return jsonResponse(403, { error: 'You are not a member of any company.' })
-  }
-
-  if (callerMembership.role !== 'admin') {
-    return jsonResponse(403, { error: 'Only company admins can remove users.' })
-  }
-
   // ── Parse body ──────────────────────────────────────────────
   let body
-  try {
-    body = JSON.parse(event.body)
-  } catch {
-    return jsonResponse(400, { error: 'Invalid request body — must be JSON.' })
+  try { body = JSON.parse(event.body) } catch {
+    return jsonResponse(400, { error: 'Invalid request body.' })
   }
 
   const { userId } = body
-  if (!userId) {
-    return jsonResponse(400, { error: 'userId is required.' })
+  if (!userId) return jsonResponse(400, { error: 'userId is required.' })
+  if (userId === user.id) return jsonResponse(400, { error: 'You cannot remove yourself.' })
+
+  // ── Privilege check ─────────────────────────────────────────
+  const [saResult, memberResult] = await Promise.all([
+    supabase.from('super_admins').select('user_id').eq('user_id', user.id).single(),
+    supabase.from('company_members').select('company_id, role').eq('user_id', user.id).single(),
+  ])
+
+  const isSuperAdmin = !!saResult.data
+  const callerMembership = memberResult.data
+
+  let targetCompanyId
+
+  if (isSuperAdmin) {
+    if (!body.companyId) return jsonResponse(400, { error: 'companyId is required for super admin.' })
+    targetCompanyId = body.companyId
+  } else if (callerMembership?.role === 'admin') {
+    targetCompanyId = callerMembership.company_id
+  } else {
+    return jsonResponse(403, { error: 'You do not have permission to remove users.' })
   }
 
-  if (userId === user.id) {
-    return jsonResponse(400, { error: 'You cannot remove yourself from the company.' })
-  }
-
-  // ── Verify target is in the same company ────────────────────
-  const { data: targetMembership, error: targetError } = await supabase
+  // ── Verify target is in the company ────────────────────────
+  const { data: targetMembership } = await supabase
     .from('company_members')
     .select('user_id')
     .eq('user_id', userId)
-    .eq('company_id', callerMembership.company_id)
+    .eq('company_id', targetCompanyId)
     .single()
 
-  if (targetError || !targetMembership) {
-    return jsonResponse(404, { error: 'User not found in your company.' })
+  if (!targetMembership) {
+    return jsonResponse(404, { error: 'User not found in that company.' })
   }
 
   // ── Remove from company ─────────────────────────────────────
-  // Deletes the company_members row only — auth user and call data are preserved.
   const { error: removeError } = await supabase
     .from('company_members')
     .delete()
     .eq('user_id', userId)
-    .eq('company_id', callerMembership.company_id)
+    .eq('company_id', targetCompanyId)
 
   if (removeError) {
     return jsonResponse(500, { error: 'Failed to remove user: ' + removeError.message })
