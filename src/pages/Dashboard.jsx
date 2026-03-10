@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { normalizePhone } from '../lib/phoneNormalize'
+import { downloadMetaPDF } from '../lib/metaPDF'
 import CSVUploader from '../components/CSVUploader'
 import DateRangePicker from '../components/DateRangePicker'
 import CallList from '../components/CallList'
@@ -49,6 +50,10 @@ export default function Dashboard({ session }) {
   const [metaLoading, setMetaLoading] = useState(false)
   const [metaResult, setMetaResult] = useState(null)
   const [metaError, setMetaError] = useState(null)
+  const [metaEmail, setMetaEmail] = useState('')
+  const [metaEmailSending, setMetaEmailSending] = useState(false)
+  const [metaEmailSent, setMetaEmailSent] = useState(false)
+  const [metaEmailError, setMetaEmailError] = useState(null)
 
   const processingRef = useRef(false)
   const hasAutoFetched = useRef(false)
@@ -271,6 +276,27 @@ export default function Dashboard({ session }) {
       setMetaError(err.message)
     } finally {
       setMetaLoading(false)
+    }
+  }
+
+  async function sendMetaReport() {
+    if (!metaEmail.includes('@') || !metaResult) return
+    setMetaEmailSending(true)
+    setMetaEmailSent(false)
+    setMetaEmailError(null)
+    try {
+      const res = await fetch(API('send-meta-report'), {
+        method: 'POST',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: metaEmail, result: metaResult, companyName }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setMetaEmailSent(true)
+    } catch (err) {
+      setMetaEmailError(err.message)
+    } finally {
+      setMetaEmailSending(false)
     }
   }
 
@@ -961,12 +987,41 @@ export default function Dashboard({ session }) {
                   ))}
                 </div>
 
-                <button
-                  onClick={() => { setMetaResult(null); setMetaError(null) }}
-                  className="text-xs text-gray-500 hover:text-gray-700 underline"
-                >
-                  ← Run another analysis
-                </button>
+                {/* Export + Email */}
+                <div className="border-t border-gray-100 pt-4 space-y-3">
+                  <div className="flex gap-3 flex-wrap items-center">
+                    <button
+                      onClick={() => downloadMetaPDF(metaResult, companyName || 'Call Analyzer')}
+                      className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors flex items-center gap-2"
+                    >
+                      ⬇ Download PDF
+                    </button>
+                    <button
+                      onClick={() => { setMetaResult(null); setMetaError(null); setMetaEmailSent(false); setMetaEmailError(null); setMetaEmail('') }}
+                      className="text-xs text-gray-500 hover:text-gray-700 underline"
+                    >
+                      ← Run another analysis
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="email"
+                      value={metaEmail}
+                      onChange={e => { setMetaEmail(e.target.value); setMetaEmailSent(false); setMetaEmailError(null) }}
+                      onKeyDown={e => e.key === 'Enter' && sendMetaReport()}
+                      placeholder="Email report to…"
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    />
+                    <button
+                      onClick={sendMetaReport}
+                      disabled={metaEmailSending || !metaEmail.includes('@')}
+                      className="px-4 py-2 text-sm rounded-lg bg-gray-800 text-white hover:bg-gray-900 font-medium disabled:opacity-50 transition-colors whitespace-nowrap"
+                    >
+                      {metaEmailSending ? 'Sending…' : metaEmailSent ? '✓ Sent!' : 'Send Email'}
+                    </button>
+                  </div>
+                  {metaEmailError && <p className="text-xs text-red-600">{metaEmailError}</p>}
+                </div>
               </div>
             )}
 
