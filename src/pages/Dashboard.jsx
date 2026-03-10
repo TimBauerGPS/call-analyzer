@@ -38,6 +38,9 @@ export default function Dashboard({ session }) {
   const [fetchMessage, setFetchMessage] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
 
+  // Member account panel (password + auto-fetch — shown instead of Settings for members)
+  const [accountOpen, setAccountOpen] = useState(false)
+
   // Meta Analysis modal
   const [metaOpen, setMetaOpen] = useState(false)
   const [metaDateMode, setMetaDateMode] = useState('all')  // 'all' | 'range'
@@ -110,21 +113,21 @@ export default function Dashboard({ session }) {
   const [csvMatchMessage, setCsvMatchMessage] = useState(null)
 
   // Derived
-  const keysConfigured = !!(
-    userSettings?.callrail_api_key &&
-    userSettings?.callrail_account_id &&
-    userSettings?.openai_api_key
-  )
-  const companyName = membership?.companyName || null
   const isAdmin = membership?.role === 'admin' || isSuperAdmin
+  const isMember = !!membership && !isAdmin   // has a company but not admin
+  // Members can't configure keys — presume configured if they have a company assignment.
+  // Admins check their actual userSettings (loaded from company_settings).
+  const keysConfigured = isMember
+    ? !!membership?.companyId
+    : !!(userSettings?.callrail_api_key && userSettings?.callrail_account_id && userSettings?.openai_api_key)
+  const companyName = membership?.companyName || null
 
   const authHeader = () => ({ Authorization: `Bearer ${session.access_token}` })
 
   // --- Load on mount ---
   useEffect(() => {
     loadCalls()
-    loadSettings()
-    loadMembership()
+    loadMembership()   // loadMembership calls loadSettings once role is known
   }, [])
 
   // Load team members once we know the user is an admin or super admin
@@ -143,8 +146,7 @@ export default function Dashboard({ session }) {
     if (!error) setCalls(data || [])
   }
 
-  // Loads company membership + super admin status in parallel.
-  // Both tables use RLS so each user can only read their own row.
+  // Loads company membership + super admin status, then loads settings with role context.
   async function loadMembership() {
     const [memberResult, saResult] = await Promise.all([
       supabase
@@ -159,36 +161,73 @@ export default function Dashboard({ session }) {
         .single(),
     ])
 
-    if (memberResult.data) {
-      setMembership({
-        companyId:   memberResult.data.company_id,
-        companyName: memberResult.data.companies?.name || null,
-        role:        memberResult.data.role,
-      })
-    }
+    const newMembership = memberResult.data ? {
+      companyId:   memberResult.data.company_id,
+      companyName: memberResult.data.companies?.name || null,
+      role:        memberResult.data.role,
+    } : null
 
-    if (saResult.data) {
-      setIsSuperAdmin(true)
-    }
+    const newIsSuperAdmin = !!saResult.data
+
+    if (newMembership)   setMembership(newMembership)
+    if (newIsSuperAdmin) setIsSuperAdmin(true)
+
+    // Load settings now that we know the role
+    const isAdminUser = newMembership?.role === 'admin' || newIsSuperAdmin
+    await loadSettings(isAdminUser, newMembership?.companyId || null)
   }
 
-  async function loadSettings() {
-    const { data } = await supabase
+  // Loads API keys from company_settings (admins) and sales_tips_prompt from user_settings.
+  // isAdminUser / companyId are passed explicitly to avoid stale closure values on first load.
+  async function loadSettings(isAdminUser = isAdmin, companyId = membership?.companyId) {
+    // API keys: company_settings for admins (RLS allows admins to read their own company's row)
+    let apiKeys = {}
+    if (isAdminUser && companyId) {
+      const { data: cs } = await supabase
+        .from('company_settings')
+        .select('callrail_api_key, callrail_account_id, openai_api_key')
+        .eq('company_id', companyId)
+        .single()
+      if (cs) apiKeys = cs
+    } else if (isAdminUser && !companyId) {
+      // Super admin not in any company: fall back to their own user_settings
+      const { data: us } = await supabase
+        .from('user_settings')
+        .select('callrail_api_key, callrail_account_id, openai_api_key')
+        .single()
+      if (us) apiKeys = us
+    }
+    // Members: no API keys loaded — they can't see or change them
+
+    // Sales tips prompt: always per-user
+    const { data: us } = await supabase
       .from('user_settings')
-      .select('*')
+      .select('sales_tips_prompt')
       .single()
 
-    if (data) {
-      setUserSettings(data)
+    if (isAdminUser) {
+      const combined = {
+        callrail_api_key:    apiKeys.callrail_api_key    || null,
+        callrail_account_id: apiKeys.callrail_account_id || null,
+        openai_api_key:      apiKeys.openai_api_key      || null,
+        sales_tips_prompt:   us?.sales_tips_prompt       || null,
+      }
+      setUserSettings(combined)
       setSettingsForm({
-        callrail_api_key:    data.callrail_api_key    || '',
-        callrail_account_id: data.callrail_account_id || '',
-        openai_api_key:      data.openai_api_key      || '',
-        sales_tips_prompt:   data.sales_tips_prompt   || DEFAULT_SALES_TIPS,
+        callrail_api_key:    combined.callrail_api_key    || '',
+        callrail_account_id: combined.callrail_account_id || '',
+        openai_api_key:      combined.openai_api_key      || '',
+        sales_tips_prompt:   combined.sales_tips_prompt   || DEFAULT_SALES_TIPS,
       })
+      // Open Settings automatically for first-time admin setup
+      if (!combined.callrail_api_key || !combined.openai_api_key) {
+        setSettingsOpen(true)
+      }
     } else {
-      setSettingsOpen(true)
+      // Members only get the sales tips prompt (read-only, used by backend)
+      setSettingsForm(f => ({ ...f, sales_tips_prompt: us?.sales_tips_prompt || DEFAULT_SALES_TIPS }))
     }
+
     setSettingsLoaded(true)
   }
 
@@ -253,16 +292,43 @@ export default function Dashboard({ session }) {
     setSettingsSaving(true)
     setSettingsError(null)
 
-    const { error } = await supabase.from('user_settings').upsert({
-      user_id:             session.user.id,
-      callrail_api_key:    settingsForm.callrail_api_key.trim(),
-      callrail_account_id: settingsForm.callrail_account_id.trim(),
-      openai_api_key:      settingsForm.openai_api_key.trim(),
-      sales_tips_prompt:   settingsForm.sales_tips_prompt,
-    }, { onConflict: 'user_id' })
+    // API keys → company_settings (admins with a company) or user_settings (super admin fallback)
+    let apiError = null
+    if (membership?.companyId) {
+      const { error } = await supabase
+        .from('company_settings')
+        .upsert({
+          company_id:          membership.companyId,
+          callrail_api_key:    settingsForm.callrail_api_key.trim(),
+          callrail_account_id: settingsForm.callrail_account_id.trim(),
+          openai_api_key:      settingsForm.openai_api_key.trim(),
+          updated_at:          new Date().toISOString(),
+        }, { onConflict: 'company_id' })
+      apiError = error
+    } else {
+      // Super admin not in a company: save to their own user_settings
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert({
+          user_id:             session.user.id,
+          callrail_api_key:    settingsForm.callrail_api_key.trim(),
+          callrail_account_id: settingsForm.callrail_account_id.trim(),
+          openai_api_key:      settingsForm.openai_api_key.trim(),
+        }, { onConflict: 'user_id' })
+      apiError = error
+    }
 
+    // Sales tips prompt → always user_settings (personal preference)
+    const { error: promptError } = await supabase
+      .from('user_settings')
+      .upsert({
+        user_id:           session.user.id,
+        sales_tips_prompt: settingsForm.sales_tips_prompt,
+      }, { onConflict: 'user_id' })
+
+    const error = apiError || promptError
     if (!error) {
-      await loadSettings()
+      await loadSettings(isAdmin, membership?.companyId)
       setSettingsSaved(true)
       setTimeout(() => setSettingsSaved(false), 3000)
       if (settingsForm.callrail_api_key && settingsForm.callrail_account_id && settingsForm.openai_api_key) {
@@ -658,27 +724,41 @@ export default function Dashboard({ session }) {
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            {!keysConfigured && (
+            {isAdmin && !keysConfigured && (
               <span className="text-xs text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
                 ⚠ API keys required
               </span>
             )}
-            {keysConfigured && (
+            {/* Admin-only nav actions */}
+            {isAdmin && (
+              <>
+                {keysConfigured && (
+                  <button
+                    onClick={() => { setMetaOpen(true); setMetaResult(null); setMetaError(null) }}
+                    className="text-xs px-2 py-1 rounded hover:bg-gray-100 text-indigo-600 hover:text-indigo-800 font-medium"
+                  >
+                    ✦ Meta Analysis
+                  </button>
+                )}
+                <button
+                  onClick={() => setSettingsOpen(v => !v)}
+                  className={`text-xs px-2 py-1 rounded hover:bg-gray-100 ${
+                    !keysConfigured ? 'text-amber-700 font-semibold' : 'text-gray-500 hover:text-gray-900'
+                  }`}
+                >
+                  ⚙ Settings
+                </button>
+              </>
+            )}
+            {/* Member-only: Account panel (password + auto-fetch only) */}
+            {isMember && (
               <button
-                onClick={() => { setMetaOpen(true); setMetaResult(null); setMetaError(null) }}
-                className="text-xs px-2 py-1 rounded hover:bg-gray-100 text-indigo-600 hover:text-indigo-800 font-medium"
+                onClick={() => setAccountOpen(v => !v)}
+                className="text-xs px-2 py-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-900"
               >
-                ✦ Meta Analysis
+                👤 Account
               </button>
             )}
-            <button
-              onClick={() => setSettingsOpen(v => !v)}
-              className={`text-xs px-2 py-1 rounded hover:bg-gray-100 ${
-                !keysConfigured ? 'text-amber-700 font-semibold' : 'text-gray-500 hover:text-gray-900'
-              }`}
-            >
-              ⚙ Settings
-            </button>
             <button
               onClick={() => supabase.auth.signOut()}
               className="text-xs text-gray-500 hover:text-gray-900 px-2 py-1 rounded hover:bg-gray-100"
@@ -688,6 +768,62 @@ export default function Dashboard({ session }) {
           </div>
         </div>
       </header>
+
+      {/* ── Member Account Panel (password + auto-fetch only) ── */}
+      {isMember && accountOpen && (
+        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4">
+          <div className="max-w-7xl mx-auto space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-900">Account</h2>
+              <button onClick={() => setAccountOpen(false)} className="text-xs text-gray-400 hover:text-gray-600">✕ Close</button>
+            </div>
+
+            {/* Auto-fetch toggle */}
+            <div>
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Fetch Behavior</h3>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <div className="relative">
+                  <input type="checkbox" className="sr-only" checked={autoFetch}
+                    onChange={e => toggleAutoFetch(e.target.checked)} />
+                  <div className={`w-9 h-5 rounded-full transition-colors ${autoFetch ? 'bg-brand-600' : 'bg-gray-300'}`} />
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${autoFetch ? 'translate-x-4' : ''}`} />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-800 font-medium">Auto-fetch calls on login</p>
+                  <p className="text-xs text-gray-500">Automatically fetch the last 7 days whenever you sign in</p>
+                </div>
+              </label>
+            </div>
+
+            {/* Change Password */}
+            <div className="pt-4 border-t border-gray-100 space-y-3">
+              <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Change Password</h3>
+              <div className="grid grid-cols-2 gap-3 max-w-md">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">New password</label>
+                  <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Min 8 characters"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Confirm password</label>
+                  <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" />
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                {passwordError && <span className="text-xs text-red-600">{passwordError}</span>}
+                {passwordSaved && <span className="text-xs text-green-600">✓ Password updated</span>}
+                <button onClick={changePassword} disabled={passwordSaving || !newPassword}
+                  className="px-4 py-2 text-sm rounded-lg bg-gray-700 text-white hover:bg-gray-800 disabled:opacity-50 font-medium">
+                  {passwordSaving ? 'Updating…' : 'Update Password'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Meta Analysis Modal ─────────────────────────────── */}
       {metaOpen && (
@@ -840,8 +976,8 @@ export default function Dashboard({ session }) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* ── Settings panel ──────────────────────────────────── */}
-        {settingsOpen && (
+        {/* ── Settings panel (admins only) ────────────────────── */}
+        {isAdmin && settingsOpen && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-900">Settings</h2>
@@ -1234,8 +1370,8 @@ export default function Dashboard({ session }) {
           </div>
         )}
 
-        {/* First-time setup nudge */}
-        {!keysConfigured && !settingsOpen && (
+        {/* First-time setup nudge (admins only) */}
+        {isAdmin && !keysConfigured && !settingsOpen && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
             <p className="text-sm font-medium text-amber-800 mb-1">API keys required before fetching calls</p>
             <p className="text-xs text-amber-600 mb-4">Add your CallRail and OpenAI credentials in Settings.</p>

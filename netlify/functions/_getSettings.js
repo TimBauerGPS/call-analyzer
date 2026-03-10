@@ -35,23 +35,61 @@ export async function getSettings(authHeader) {
     throw new Error('Unauthorized: invalid or expired session.')
   }
 
-  // Fetch the user's stored API keys
-  const { data: settings, error: settingsError } = await supabase
-    .from('user_settings')
-    .select('callrail_api_key, callrail_account_id, openai_api_key, sales_tips_prompt')
+  // Determine the user's company (if any)
+  const { data: memberData } = await supabase
+    .from('company_members')
+    .select('company_id')
     .eq('user_id', user.id)
     .single()
 
-  if (settingsError || !settings) {
-    throw new Error('API keys not configured. Please add them in Settings before fetching calls.')
+  const companyId = memberData?.company_id || null
+
+  // API keys are stored at the company level in company_settings.
+  // Fall back to user_settings for super admins or users without a company.
+  let apiKeys = {}
+  if (companyId) {
+    const { data: cs } = await supabase
+      .from('company_settings')
+      .select('callrail_api_key, callrail_account_id, openai_api_key')
+      .eq('company_id', companyId)
+      .single()
+    if (cs) apiKeys = cs
+  }
+
+  // Fallback: user_settings (backwards compat / super admins not in a company)
+  if (!apiKeys.callrail_api_key || !apiKeys.openai_api_key) {
+    const { data: us } = await supabase
+      .from('user_settings')
+      .select('callrail_api_key, callrail_account_id, openai_api_key')
+      .eq('user_id', user.id)
+      .single()
+    if (us) {
+      apiKeys.callrail_api_key     = apiKeys.callrail_api_key     || us.callrail_api_key
+      apiKeys.callrail_account_id  = apiKeys.callrail_account_id  || us.callrail_account_id
+      apiKeys.openai_api_key       = apiKeys.openai_api_key       || us.openai_api_key
+    }
+  }
+
+  // Sales tips prompt is always per-user (everyone can customize their coaching questions)
+  const { data: promptData } = await supabase
+    .from('user_settings')
+    .select('sales_tips_prompt')
+    .eq('user_id', user.id)
+    .single()
+
+  const settings = {
+    callrail_api_key:    apiKeys.callrail_api_key    || null,
+    callrail_account_id: apiKeys.callrail_account_id || null,
+    openai_api_key:      apiKeys.openai_api_key      || null,
+    sales_tips_prompt:   promptData?.sales_tips_prompt || null,
   }
 
   if (!settings.callrail_api_key || !settings.callrail_account_id) {
-    throw new Error('CallRail API Key and Account ID are required. Please configure them in Settings.')
+    throw new Error('CallRail API Key and Account ID are not configured. An admin must add them in Settings.')
   }
 
   if (!settings.openai_api_key) {
-    throw new Error('OpenAI API Key is required. Please configure it in Settings.')
+    throw new Error('OpenAI API Key is not configured. An admin must add it in Settings.')
   }
 
   return { user, settings }
