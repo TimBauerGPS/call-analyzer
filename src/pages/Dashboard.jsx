@@ -7,11 +7,17 @@ import CallList from '../components/CallList'
 
 const API = (path) => `/.netlify/functions/${path}`
 
-const DEFAULT_SALES_TIPS = `1. What could the handler have done to book this on the spot?
-2. Was insurance mentioned as a funding source?
-3. Was an appointment/inspection offered?
-4. Did the caller appear interested?
-5. General sales tips for this specific call.`
+const DEFAULT_SALES_TIPS = `Evaluate this call against the four critical sales goals below. Be direct, specific, and actionable — reference exact words or moments from the call where possible.
+
+1. BOOK THE APPOINTMENT — Did the handler ask confidently for the inspection? Was a date and time secured, or did the call end with no committed next step? Was any urgency communicated?
+
+2. ELIMINATE COMPARISON SHOPPING — Did the handler give the caller enough confidence and differentiation to stop them from calling competitors? Were expertise, response time, or insurance experience used as trust-builders? Was any urgency created around acting quickly?
+
+3. CONTROL THE FUTURE STATE — Did the handler walk the caller through what happens next — the inspection, the process, insurance coordination, timeline? Did the caller leave feeling mentally committed and confident in this company?
+
+4. CLOSE TODAY — Was there a direct close attempt before the call ended? If the appointment was not booked, identify the specific moment the sale was lost and write the exact words the handler should have said instead.
+
+Finish with: What was the single most important missed opportunity, and what should the handler have said?`
 
 // --- Helpers ---
 function today() { return new Date().toISOString().slice(0, 10) }
@@ -31,6 +37,16 @@ export default function Dashboard({ session }) {
   const [fetchStatus, setFetchStatus] = useState(null)
   const [fetchMessage, setFetchMessage] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+
+  // Meta Analysis modal
+  const [metaOpen, setMetaOpen] = useState(false)
+  const [metaDateMode, setMetaDateMode] = useState('all')  // 'all' | 'range'
+  const [metaStart, setMetaStart] = useState(daysAgo(90))
+  const [metaEnd, setMetaEnd] = useState(today())
+  const [metaLoading, setMetaLoading] = useState(false)
+  const [metaResult, setMetaResult] = useState(null)
+  const [metaError, setMetaError] = useState(null)
+
   const processingRef = useRef(false)
   const hasAutoFetched = useRef(false)
 
@@ -193,6 +209,29 @@ export default function Dashboard({ session }) {
       setTeamError(err.message)
     } finally {
       setTeamLoading(false)
+    }
+  }
+
+  async function runMetaAnalysis() {
+    setMetaLoading(true)
+    setMetaError(null)
+    setMetaResult(null)
+    try {
+      const body = metaDateMode === 'range'
+        ? { startDate: metaStart, endDate: metaEnd }
+        : {}
+      const res = await fetch(API('openai-meta-analyze'), {
+        method: 'POST',
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      setMetaResult(data)
+    } catch (err) {
+      setMetaError(err.message)
+    } finally {
+      setMetaLoading(false)
     }
   }
 
@@ -624,6 +663,14 @@ export default function Dashboard({ session }) {
                 ⚠ API keys required
               </span>
             )}
+            {keysConfigured && (
+              <button
+                onClick={() => { setMetaOpen(true); setMetaResult(null); setMetaError(null) }}
+                className="text-xs px-2 py-1 rounded hover:bg-gray-100 text-indigo-600 hover:text-indigo-800 font-medium"
+              >
+                ✦ Meta Analysis
+              </button>
+            )}
             <button
               onClick={() => setSettingsOpen(v => !v)}
               className={`text-xs px-2 py-1 rounded hover:bg-gray-100 ${
@@ -641,6 +688,155 @@ export default function Dashboard({ session }) {
           </div>
         </div>
       </header>
+
+      {/* ── Meta Analysis Modal ─────────────────────────────── */}
+      {metaOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">✦ Meta Analysis</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  AI-powered trends across all analyzed viable calls — ranked by impact on bookings
+                </p>
+              </div>
+              <button onClick={() => setMetaOpen(false)}
+                className="text-gray-400 hover:text-gray-700 text-xl leading-none">&times;</button>
+            </div>
+
+            {/* Controls */}
+            {!metaResult && !metaLoading && (
+              <div className="px-6 py-5 space-y-4">
+                {/* Date mode toggle */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-2">Calls to include</label>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-300 text-sm w-fit">
+                    <button
+                      onClick={() => setMetaDateMode('all')}
+                      className={`px-4 py-2 font-medium transition-colors ${metaDateMode === 'all' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      All Historic Calls
+                    </button>
+                    <button
+                      onClick={() => setMetaDateMode('range')}
+                      className={`px-4 py-2 font-medium transition-colors ${metaDateMode === 'range' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      Date Range
+                    </button>
+                  </div>
+                </div>
+
+                {metaDateMode === 'range' && (
+                  <div className="flex items-center gap-3">
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">From</label>
+                      <input type="date" value={metaStart} onChange={e => setMetaStart(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-600 mb-1">To</label>
+                      <input type="date" value={metaEnd} onChange={e => setMetaEnd(e.target.value)}
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                    </div>
+                  </div>
+                )}
+
+                {metaError && (
+                  <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{metaError}</p>
+                )}
+
+                <button
+                  onClick={runMetaAnalysis}
+                  className="px-6 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  Run Analysis
+                </button>
+              </div>
+            )}
+
+            {/* Loading */}
+            {metaLoading && (
+              <div className="flex flex-col items-center justify-center py-16 gap-4 text-gray-500">
+                <svg className="animate-spin w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="text-sm">Analyzing calls… this may take 20–40 seconds</p>
+              </div>
+            )}
+
+            {/* Results */}
+            {metaResult && !metaLoading && (
+              <div className="overflow-y-auto px-6 py-5 space-y-5">
+
+                {/* Stats bar */}
+                <div className="flex items-center gap-6 bg-indigo-50 rounded-xl px-4 py-3 text-sm">
+                  <span className="text-indigo-700 font-semibold">{metaResult.callCount} viable calls analyzed</span>
+                  <span className="text-gray-400">·</span>
+                  <span className="text-gray-700">{metaResult.bookedRate || `${metaResult.bookedCount} booked`}</span>
+                  <span className="text-gray-400">·</span>
+                  <span className="text-gray-500 text-xs capitalize">{metaResult.period}</span>
+                </div>
+
+                {/* Executive summary */}
+                <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Executive Summary</p>
+                  <p className="text-sm text-gray-800 leading-relaxed">{metaResult.summary}</p>
+                </div>
+
+                {/* Quick win */}
+                {metaResult.quickWin && (
+                  <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                    <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-1">⚡ Quick Win — Implement Tomorrow</p>
+                    <p className="text-sm text-green-900 leading-relaxed">{metaResult.quickWin}</p>
+                  </div>
+                )}
+
+                {/* 5 Priorities */}
+                <div className="space-y-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Top 5 Training Priorities</p>
+                  {metaResult.priorities?.map(p => (
+                    <div key={p.rank} className="border border-gray-200 rounded-xl overflow-hidden">
+                      <div className="flex items-center gap-3 bg-indigo-600 px-4 py-2.5">
+                        <span className="text-white font-bold text-lg leading-none">#{p.rank}</span>
+                        <span className="text-white font-semibold text-sm">{p.title}</span>
+                      </div>
+                      <div className="p-4 space-y-3 text-sm">
+                        <div>
+                          <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">The Problem</p>
+                          <p className="text-gray-800 leading-relaxed">{p.problem}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">Evidence from Calls</p>
+                          <p className="text-gray-700 leading-relaxed">{p.evidence}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-1">What to Train</p>
+                          <p className="text-gray-800 leading-relaxed">{p.training}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold text-green-600 uppercase tracking-wide mb-1">Expected Impact</p>
+                          <p className="text-gray-700 leading-relaxed">{p.impact}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => { setMetaResult(null); setMetaError(null) }}
+                  className="text-xs text-gray-500 hover:text-gray-700 underline"
+                >
+                  ← Run another analysis
+                </button>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 

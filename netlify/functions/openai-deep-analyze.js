@@ -9,11 +9,17 @@
  */
 import { getSettings, jsonResponse as json } from './_getSettings.js'
 
-const DEFAULT_SALES_TIPS_PROMPT = `1. What could the handler have done to book this on the spot?
-2. Was insurance mentioned as a funding source?
-3. Was an appointment/inspection offered?
-4. Did the caller appear interested?
-5. General sales tips for this specific call.`
+const DEFAULT_SALES_TIPS_PROMPT = `Evaluate this call against the four critical sales goals below. For each, cite specific moments and note where the handler's tone, confidence, or language helped or hurt. Be direct and actionable.
+
+1. BOOK THE APPOINTMENT — Did the handler ask clearly and confidently for the inspection? Was a specific date and time secured, or did the call end without a committed next step? Was urgency communicated?
+
+2. ELIMINATE COMPARISON SHOPPING — Did the handler give the caller enough confidence, authority, and differentiation that they felt no need to call anyone else? Were response time, expertise, or insurance experience used as trust-builders? Did the handler convey any sense of urgency (secondary damage, insurance timelines, availability)?
+
+3. CONTROL THE FUTURE STATE — Did the handler paint a clear picture of what happens next — the inspection, the process, insurance coordination, timeline expectations? Did the caller leave the call mentally committed and emotionally confident in this company specifically?
+
+4. CLOSE TODAY — Was there a direct, confident close attempt before the call ended? If the appointment was not booked, identify the exact moment the sale was lost and write the specific words the handler should have said instead.
+
+Finish with: What was the single most important missed opportunity on this call, and what should the handler have said?`
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' })
@@ -61,9 +67,9 @@ Return ONLY valid JSON with these exact fields:
   "wasBooked": true/false,
   "sentiment": "string — one word: anxious, confident, hesitant, frustrated, satisfied, neutral",
   "sentimentScore": 0-100,
-  "coachingTips": ["tip1", "tip2", "tip3"],
-  "missedFlags": ["flag1", "flag2"],
-  "tonalFeedback": "string — description of caller and handler tone, energy, and emotional state",
+  "coachingTips": ["tip1 — specific, actionable coaching point tied to booking, comparison shopping, future state, or closing", "tip2", "tip3"],
+  "missedFlags": ["flag1 — specific moment where handler lost control, invited comparison shopping, failed to close, or left caller without confidence", "flag2"],
+  "tonalFeedback": "string — assess handler confidence, urgency, empathy, and closing energy. Note where tone built or eroded trust. Did the handler sound like an authority the caller should commit to, or like one of many options?",
   "talkTimeRatio": "string — e.g. Agent 40% / Caller 60%",
   "transcript": "string — full verbatim transcript of the call"
 }

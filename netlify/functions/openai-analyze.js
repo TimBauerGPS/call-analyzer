@@ -7,11 +7,17 @@
  */
 import { getSettings, jsonResponse as json } from './_getSettings.js'
 
-const DEFAULT_SALES_TIPS_PROMPT = `1. What could the handler have done to book this on the spot?
-2. Was insurance mentioned as a funding source?
-3. Was an appointment/inspection offered?
-4. Did the caller appear interested?
-5. General sales tips for this specific call.`
+const DEFAULT_SALES_TIPS_PROMPT = `Evaluate this call against the four critical sales goals below. Be direct, specific, and actionable — reference exact words or moments from the transcript where possible.
+
+1. BOOK THE APPOINTMENT — Did the handler ask confidently for the inspection? Was a date and time secured, or did the call end with no committed next step? Was any urgency communicated?
+
+2. ELIMINATE COMPARISON SHOPPING — Did the handler give the caller enough confidence and differentiation to stop them from calling competitors? Were expertise, response time, or insurance experience used as trust-builders? Was any urgency created around acting quickly?
+
+3. CONTROL THE FUTURE STATE — Did the handler walk the caller through what happens next — the inspection, the process, insurance coordination, timeline? Did the caller leave feeling mentally committed and confident in this company?
+
+4. CLOSE TODAY — Was there a direct close attempt before the call ended? If the appointment was not booked, identify the specific moment the sale was lost and write the exact words the handler should have said instead.
+
+Finish with: What was the single most important missed opportunity, and what should the handler have said?`
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' })
@@ -51,8 +57,8 @@ Return ONLY valid JSON with these exact fields:
   "wasBooked": true/false,
   "sentiment": "string — one word: anxious, confident, hesitant, frustrated, satisfied, neutral",
   "sentimentScore": 0-100,
-  "coachingTips": ["tip1", "tip2", "tip3"],
-  "missedFlags": ["flag1", "flag2"]
+  "coachingTips": ["tip1 — specific, actionable coaching point tied to booking, eliminating comparison shopping, controlling future state, or closing today", "tip2", "tip3"],
+  "missedFlags": ["flag1 — specific moment where handler failed to close, invited comparison shopping, or left caller without confidence or a next step", "flag2"]
 }
 
 No markdown fences. No extra keys. JSON only.`
