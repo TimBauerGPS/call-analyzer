@@ -652,13 +652,14 @@ export default function Dashboard({ session }) {
     try {
       // Master admins: fetch from selected partner or all partners in parallel
       let rawCalls = []
+      const skippedPartners = []
       if (isMasterAdmin && !selectedPartnerId && partners.length > 0) {
         setFetchMessage(`Fetching calls from ${partners.length} partner companies…`)
         const results = await Promise.all(
           partners.map(p =>
             apiFetch(`callrail-fetch?start=${dateRange.start}&end=${dateRange.end}&partnerId=${p.id}`)
               .then(res => (res.calls || []).map(c => ({ ...c, _partnerId: p.id, _partnerName: p.company_name })))
-              .catch(() => [])
+              .catch(() => { skippedPartners.push(p.company_name); return [] })
           )
         )
         rawCalls = results.flat()
@@ -673,8 +674,13 @@ export default function Dashboard({ session }) {
       setFetchMessage(`${eligible.length} eligible calls found. Saving…`)
 
       if (eligible.length === 0) {
-        setFetchStatus('done')
-        setFetchMessage('No new calls with recordings ≥60s in this range.')
+        setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
+        setFetchMessage(
+          'No new calls with recordings ≥60s in this range.' +
+          (skippedPartners.length > 0
+            ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
+            : '')
+        )
         processingRef.current = false
         return
       }
@@ -760,8 +766,13 @@ export default function Dashboard({ session }) {
         await loadCalls()
       }
 
-      setFetchStatus('done')
-      setFetchMessage(`Done — ${done} call${done === 1 ? '' : 's'} analyzed.`)
+      setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
+      setFetchMessage(
+        `Done — ${done} call${done === 1 ? '' : 's'} analyzed.` +
+        (skippedPartners.length > 0
+          ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
+          : '')
+      )
     } catch (err) {
       setFetchStatus('error')
       setFetchMessage(err.message)
@@ -1816,8 +1827,9 @@ export default function Dashboard({ session }) {
             </div>
             {fetchMessage && (
               <div className={`mt-3 text-xs px-3 py-2 rounded-lg border ${
-                fetchStatus === 'error' ? 'bg-red-50 border-red-200 text-red-700'
-                : fetchStatus === 'done' ? 'bg-green-50 border-green-200 text-green-700'
+                fetchStatus === 'error'   ? 'bg-red-50 border-red-200 text-red-700'
+                : fetchStatus === 'done'    ? 'bg-green-50 border-green-200 text-green-700'
+                : fetchStatus === 'warning' ? 'bg-amber-50 border-amber-200 text-amber-800'
                 : 'bg-blue-50 border-blue-200 text-blue-700'
               }`}>
                 {fetchMessage}
