@@ -1402,26 +1402,31 @@ export default function Dashboard({ session }) {
                 {/* Existing partners list */}
                 {partners.length > 0 && (
                   <div className="space-y-2">
-                    {partners.map(p => (
-                      <div key={p.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                        <div>
-                          <span className="font-medium text-gray-900">{p.company_name}</span>
-                          {p.callrail_account_id && (
-                            <span className="ml-2 text-xs text-gray-400">Acct: {p.callrail_account_id}</span>
-                          )}
+                    {partners.map(p => {
+                      const hasCredentials = !!(p.callrail_api_key && p.callrail_account_id)
+                      return (
+                        <div key={p.id} className={`flex items-center justify-between border rounded-lg px-3 py-2 text-sm ${hasCredentials ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-medium text-gray-900 truncate">{p.company_name}</span>
+                            {hasCredentials ? (
+                              <span className="text-xs text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full flex-shrink-0">✓ Credentials set</span>
+                            ) : (
+                              <span className="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">⚠ Missing credentials</span>
+                            )}
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <button
+                              onClick={() => setPartnerForm({ id: p.id, company_name: p.company_name, callrail_api_key: p.callrail_api_key || '', callrail_account_id: p.callrail_account_id || '' })}
+                              className="text-xs text-indigo-600 hover:text-indigo-800"
+                            >Edit</button>
+                            <button
+                              onClick={() => deletePartner(p.id)}
+                              className="text-xs text-red-500 hover:text-red-700"
+                            >Remove</button>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setPartnerForm({ id: p.id, company_name: p.company_name, callrail_api_key: p.callrail_api_key || '', callrail_account_id: p.callrail_account_id || '' })}
-                            className="text-xs text-indigo-600 hover:text-indigo-800"
-                          >Edit</button>
-                          <button
-                            onClick={() => deletePartner(p.id)}
-                            className="text-xs text-red-500 hover:text-red-700"
-                          >Remove</button>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
 
