@@ -51,7 +51,7 @@ export async function handler(event) {
   // ── Parse body ──────────────────────────────────────────────
   let body = {}
   try { body = JSON.parse(event.body || '{}') } catch { /* use defaults */ }
-  const { startDate, endDate } = body
+  const { startDate, endDate, instructionPrompt, partnerCompany } = body
 
   // ── Query viable, fully-analyzed calls ──────────────────────
   let query = supabase
@@ -70,8 +70,9 @@ export async function handler(event) {
     query = query.eq('user_id', user.id)
   }
 
-  if (startDate) query = query.gte('call_date', startDate)
-  if (endDate)   query = query.lte('call_date', endDate + 'T23:59:59')
+  if (startDate)      query = query.gte('call_date', startDate)
+  if (endDate)        query = query.lte('call_date', endDate + 'T23:59:59')
+  if (partnerCompany) query = query.eq('partner_company', partnerCompany)
 
   const { data: calls, error: callsErr } = await query
   if (callsErr) return json(500, { error: 'Failed to load calls: ' + callsErr.message })
@@ -108,15 +109,15 @@ export async function handler(event) {
   }).join('\n\n---\n\n')
 
   // ── System prompt ────────────────────────────────────────────
-  const systemPrompt = `You are a sales training consultant for a restoration company (water damage, fire, mold). You are reviewing a batch of inbound call analyses to identify the most impactful training opportunities.
+  const DEFAULT_INSTRUCTION = `You are a sales training consultant for a restoration company (water damage, fire, mold). You are reviewing a batch of inbound call analyses to identify the most impactful training opportunities.
 
 Your four core goals are:
 1. BOOK THE APPOINTMENT — Get every viable lead committed to an inspection before the call ends
 2. ELIMINATE COMPARISON SHOPPING — Make the caller feel no need to call other companies
 3. CONTROL THE FUTURE STATE — Walk every caller through what happens next so they feel mentally committed
-4. CLOSE TODAY — Secure a commitment on every call, same day
+4. CLOSE TODAY — Secure a commitment on every call, same day`
 
-Analyze the call data below and return ONLY valid JSON:
+  const JSON_SCHEMA = `\n\nAnalyze the call data below and return ONLY valid JSON:
 {
   "summary": "string — 2-3 sentence executive summary of the patterns you observed across all calls. Be frank.",
   "quickWin": "string — the single change that would have the biggest immediate impact on bookings if implemented tomorrow",
@@ -134,6 +135,14 @@ Analyze the call data below and return ONLY valid JSON:
 }
 
 Return exactly 5 items in priorities, ranked by expected impact on bookings. No markdown fences. JSON only.`
+
+  // Strip out any JSON schema the user may have included to prevent duplication,
+  // then append the fixed schema so the output format is always consistent.
+  const instructionBase = (instructionPrompt || DEFAULT_INSTRUCTION)
+    .replace(/Analyze the call data below[\s\S]*$/, '')
+    .trim()
+
+  const systemPrompt = instructionBase + JSON_SCHEMA
 
   const userMessage = `Period: ${period}
 Total viable calls analyzed: ${calls.length}

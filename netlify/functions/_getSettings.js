@@ -12,7 +12,10 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-export async function getSettings(authHeader) {
+// partnerId: optional uuid from user_partners table.
+// If supplied, the partner's CallRail keys override company/user keys,
+// but the user's own OpenAI key is always used (never the partner's).
+export async function getSettings(authHeader, { partnerId, requireCallRail = true } = {}) {
   if (!authHeader?.startsWith('Bearer ')) {
     throw new Error('Unauthorized: missing session token.')
   }
@@ -56,17 +59,39 @@ export async function getSettings(authHeader) {
     if (cs) apiKeys = cs
   }
 
-  // Fallback: user_settings (backwards compat / super admins not in a company)
-  if (!apiKeys.callrail_api_key || !apiKeys.openai_api_key) {
+  // Partner override: if a specific partner ID is passed, use that partner's CallRail keys.
+  // The user's own OpenAI key is still used (billing stays with the master user).
+  if (partnerId) {
+    const { data: partner, error: partnerErr } = await supabase
+      .from('user_partners')
+      .select('callrail_api_key, callrail_account_id, company_name')
+      .eq('id', partnerId)
+      .eq('user_id', user.id)   // security: must belong to this user
+      .single()
+    if (partnerErr || !partner) {
+      throw new Error(`Partner not found or access denied (id: ${partnerId}).`)
+    }
+    if (!partner.callrail_api_key || !partner.callrail_account_id) {
+      throw new Error(`Partner "${partner.company_name}" is missing CallRail credentials. Add them in Settings → Partner Companies.`)
+    }
+    apiKeys.callrail_api_key    = partner.callrail_api_key
+    apiKeys.callrail_account_id = partner.callrail_account_id
+  }
+
+  // Fallback: user_settings (backwards compat / super admins / regular users not in a company)
+  // Skip CallRail fallback if partner keys were already set above.
+  if (!apiKeys.openai_api_key) {
     const { data: us } = await supabase
       .from('user_settings')
       .select('callrail_api_key, callrail_account_id, openai_api_key')
       .eq('user_id', user.id)
       .single()
     if (us) {
-      apiKeys.callrail_api_key     = apiKeys.callrail_api_key     || us.callrail_api_key
-      apiKeys.callrail_account_id  = apiKeys.callrail_account_id  || us.callrail_account_id
-      apiKeys.openai_api_key       = apiKeys.openai_api_key       || us.openai_api_key
+      if (!apiKeys.callrail_api_key) {
+        apiKeys.callrail_api_key    = us.callrail_api_key    || null
+        apiKeys.callrail_account_id = us.callrail_account_id || null
+      }
+      apiKeys.openai_api_key = us.openai_api_key || null
     }
   }
 
@@ -84,8 +109,8 @@ export async function getSettings(authHeader) {
     sales_tips_prompt:   promptData?.sales_tips_prompt || null,
   }
 
-  if (!settings.callrail_api_key || !settings.callrail_account_id) {
-    throw new Error('CallRail API Key and Account ID are not configured. An admin must add them in Settings.')
+  if (requireCallRail && (!settings.callrail_api_key || !settings.callrail_account_id)) {
+    throw new Error('CallRail API Key and Account ID are not configured. Add them in Settings' + (partnerId ? ' → Partner Companies.' : '.'))
   }
 
   if (!settings.openai_api_key) {

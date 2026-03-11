@@ -69,10 +69,12 @@ export async function handler(event) {
   let targetRole = 'member'
 
   if (isSuperAdmin) {
-    // Super admin: can specify any company or create a new one, and set role
-    targetRole = body.role === 'admin' ? 'admin' : 'member'
+    // Super admin: can specify any company or create a new one, set role, or create a master admin
+    targetRole = ['admin', 'member', 'master_admin'].includes(body.role) ? body.role : 'member'
 
-    if (body.newCompanyName?.trim()) {
+    if (targetRole === 'master_admin') {
+      // Master admins have no company — handled after user creation
+    } else if (body.newCompanyName?.trim()) {
       // Create a new company on the fly
       const name = body.newCompanyName.trim()
       const { data: newCo, error: coErr } = await supabase
@@ -118,23 +120,34 @@ export async function handler(event) {
 
   const newUserId = created.user.id
 
-  // ── Assign to company ───────────────────────────────────────
-  const { error: memberError } = await supabase
-    .from('company_members')
-    .insert({ user_id: newUserId, company_id: targetCompanyId, role: targetRole })
+  // ── Assign to company OR mark as master admin ───────────────
+  if (targetRole === 'master_admin') {
+    const { error: maError } = await supabase
+      .from('user_settings')
+      .upsert({ user_id: newUserId, is_master_admin: true }, { onConflict: 'user_id' })
 
-  if (memberError) {
-    await supabase.auth.admin.deleteUser(newUserId)
-    return jsonResponse(500, {
-      error: 'Failed to assign user to company — account was not created. ' + memberError.message,
-    })
+    if (maError) {
+      await supabase.auth.admin.deleteUser(newUserId)
+      return jsonResponse(500, { error: 'Failed to set master admin flag: ' + maError.message })
+    }
+  } else {
+    const { error: memberError } = await supabase
+      .from('company_members')
+      .insert({ user_id: newUserId, company_id: targetCompanyId, role: targetRole })
+
+    if (memberError) {
+      await supabase.auth.admin.deleteUser(newUserId)
+      return jsonResponse(500, {
+        error: 'Failed to assign user to company — account was not created. ' + memberError.message,
+      })
+    }
   }
 
   return jsonResponse(200, {
     success:    true,
     isSuperAdmin,
     user:       { id: newUserId, email: created.user.email },
-    companyId:  targetCompanyId,
+    companyId:  targetCompanyId || null,
     role:       targetRole,
   })
 }

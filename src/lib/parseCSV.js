@@ -35,6 +35,7 @@ export function parseJobCSV(file) {
         const insuranceClaimCol = findColumn(headers, ['Insurance Claim Number', 'Claim Number'])
         const jobIdCol        = findColumn(headers, ['Job ID', 'job_id', 'File Number', 'ID'])
         const jobTypeCol      = findColumn(headers, ['Job Type', 'job_type', 'Type', 'Loss Type'])
+        const companyCol      = findColumn(headers, ['Company', 'Partner Company', 'Partner', 'Company Name'])
         const linkCol         = findColumn(headers, ['Link to Project', 'Project Link', 'Albi Link', 'Link'])
         const contractSignedCol = findColumn(headers, [
           'Contract Signed', 'Contract Date', 'contract_signed',
@@ -72,12 +73,13 @@ export function parseJobCSV(file) {
             estimatedRevenue: revenueCol ? row[revenueCol] : null,
             insuranceCompany: insuranceCoCol ? row[insuranceCoCol] : null,
             insuranceClaimNumber: insuranceClaimCol ? row[insuranceClaimCol] : null,
+            partnerCompany: companyCol ? row[companyCol]?.trim() || null : null,
             albiUrl,
             contractSigned,
           })
         }
 
-        resolve({ jobMap, rowCount: results.data.length, headers })
+        resolve({ jobMap, rowCount: results.data.length, headers, hasCompanyColumn: !!companyCol })
       },
       error: (err) => reject(err),
     })

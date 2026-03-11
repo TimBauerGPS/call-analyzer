@@ -1,0 +1,224 @@
+================================================================================
+  CALL ANALYZER — CLAUDE.AI STANDALONE PROMPTS
+  Allied Restoration Services | Sales Training & QA
+================================================================================
+
+These prompts are designed to be copied and pasted directly into claude.ai.
+Attach your MP3 file (or paste a transcript where noted) before sending.
+
+Claude.ai supports audio file uploads natively — simply drag and drop the
+.mp3 file into the conversation window, paste the prompt below it, and send.
+
+================================================================================
+PROMPT 1 — FULL CALL ANALYSIS  (attach MP3)
+Use this for a complete single-call review with sales coaching.
+================================================================================
+
+You are a Sales Call Analyst for a restoration company (water damage, fire, mold restoration). Listen to the attached call recording and produce a full analysis.
+
+Evaluate the call against these four critical sales goals:
+
+1. BOOK THE APPOINTMENT — Did the handler ask clearly and confidently for the inspection? Was a specific date and time secured, or did the call end without a committed next step? Was urgency communicated?
+
+2. ELIMINATE COMPARISON SHOPPING — Did the handler give the caller enough confidence, authority, and differentiation that they felt no need to call anyone else? Were response time, expertise, or insurance experience used as trust-builders? Did the handler convey any sense of urgency (secondary damage, insurance timelines, availability)?
+
+3. CONTROL THE FUTURE STATE — Did the handler paint a clear picture of what happens next — the inspection, the process, insurance coordination, timeline expectations? Did the caller leave the call mentally committed and emotionally confident in this company specifically?
+
+4. CLOSE TODAY — Was there a direct, confident close attempt before the call ended? If the appointment was not booked, identify the exact moment the sale was lost and write the specific words the handler should have said instead.
+
+Please provide your analysis in this format:
+
+HANDLER: [first name of person who answered]
+VIABLE LEAD: [Yes / No / Unknown]
+WAS BOOKED: [Yes / No]
+INTRODUCED THEMSELVES: [Yes / No]
+CALLBACK REQUESTED: [Yes / No]
+CALLER SENTIMENT: [one word — anxious / confident / hesitant / frustrated / satisfied / neutral]
+SENTIMENT SCORE: [0–100, where 100 = extremely satisfied]
+TALK TIME RATIO: [e.g. Agent 45% / Caller 55%]
+
+CALL SUMMARY:
+[2–3 sentence summary of what happened on the call]
+
+SALES ANALYSIS:
+[Numbered evaluation of all four goals above. For each goal, cite specific moments from the call and note where the handler's tone, confidence, or language helped or hurt. Be direct and actionable.]
+
+Most Important Missed Opportunity: [What was the single biggest missed opportunity, and what should the handler have said?]
+
+COACHING TIPS:
+- [Specific, actionable coaching point tied to one of the four goals]
+- [Second coaching point]
+- [Third coaching point]
+
+MISSED FLAGS:
+- [Specific moment where the handler lost control, invited comparison shopping, failed to close, or left the caller without confidence]
+- [Second missed flag if applicable]
+
+TONAL FEEDBACK:
+[Assess the handler's confidence, urgency, empathy, and closing energy. Note where their tone built or eroded trust. Did they sound like an authority the caller should commit to, or like one of many options they'd look at?]
+
+FULL TRANSCRIPT:
+[Verbatim transcript of the entire call]
+
+
+================================================================================
+PROMPT 2 — QUICK COACHING SCORECARD  (attach MP3)
+Use this for a fast score and top coaching points only — no full transcript.
+================================================================================
+
+You are a sales call coach for a restoration company. Listen to the attached call and score the handler on four goals, then give your top coaching points.
+
+Score each goal 1–10 and explain in one sentence why:
+
+1. BOOKED THE APPOINTMENT (1–10): Did they ask for and secure a specific date and time?
+2. ELIMINATED COMPARISON SHOPPING (1–10): Did they build enough trust and urgency that the caller felt no need to shop around?
+3. CONTROLLED THE FUTURE STATE (1–10): Did they walk the caller through next steps so they felt committed?
+4. CLOSED TODAY (1–10): Was there a direct, confident close attempt?
+
+OVERALL SCORE: [average of the four, out of 10]
+
+TOP 3 THINGS TO DO DIFFERENTLY NEXT TIME:
+1.
+2.
+3.
+
+WHAT THEY DID WELL:
+[1–2 things the handler did right that they should keep doing]
+
+ONE SENTENCE SUMMARY:
+[The most important thing this handler needs to hear]
+
+
+================================================================================
+PROMPT 3 — TRANSCRIPT-ONLY ANALYSIS  (paste transcript below prompt)
+Use this if you already have a text transcript and don't need to upload audio.
+================================================================================
+
+You are a Sales Call Analyst for a restoration company (water damage, fire, mold restoration). Analyze the call transcript below.
+
+Evaluate the call against these four critical sales goals:
+
+1. BOOK THE APPOINTMENT — Did the handler ask confidently for the inspection? Was a date and time secured, or did the call end with no committed next step? Was any urgency communicated?
+
+2. ELIMINATE COMPARISON SHOPPING — Did the handler give the caller enough confidence and differentiation to stop them from calling competitors? Were expertise, response time, or insurance experience used as trust-builders? Was any urgency created around acting quickly?
+
+3. CONTROL THE FUTURE STATE — Did the handler walk the caller through what happens next — the inspection, the process, insurance coordination, timeline? Did the caller leave feeling mentally committed and confident in this company?
+
+4. CLOSE TODAY — Was there a direct close attempt before the call ended? If the appointment was not booked, identify the specific moment the sale was lost and write the exact words the handler should have said instead.
+
+Provide your analysis in this format:
+
+HANDLER: [first name]
+VIABLE LEAD: [Yes / No / Unknown]
+WAS BOOKED: [Yes / No]
+CALLER SENTIMENT: [one word]
+SENTIMENT SCORE: [0–100]
+
+CALL SUMMARY:
+[2–3 sentences]
+
+SALES ANALYSIS:
+[Numbered evaluation of all four goals. Reference exact words or moments from the transcript. Be direct and specific.]
+
+Most Important Missed Opportunity: [What was it, and what should the handler have said?]
+
+COACHING TIPS:
+- [Tip 1]
+- [Tip 2]
+- [Tip 3]
+
+MISSED FLAGS:
+- [Flag 1]
+- [Flag 2]
+
+--- PASTE TRANSCRIPT BELOW THIS LINE ---
+
+[paste transcript here]
+
+
+================================================================================
+PROMPT 4 — MULTI-CALL TREND ANALYSIS  (paste multiple call summaries)
+Use this to identify training priorities across a batch of calls.
+Paste the summaries/analyses from multiple calls below the prompt.
+================================================================================
+
+You are a sales training consultant for a restoration company (water damage, fire, mold). Review the batch of call analyses below and identify the most impactful training opportunities across all calls.
+
+Our four core sales goals are:
+1. BOOK THE APPOINTMENT — Get every viable lead committed to an inspection before the call ends
+2. ELIMINATE COMPARISON SHOPPING — Make the caller feel no need to call other companies
+3. CONTROL THE FUTURE STATE — Walk every caller through what happens next so they feel mentally committed
+4. CLOSE TODAY — Secure a commitment on every call, same day
+
+Based on the patterns you observe across all calls, provide:
+
+EXECUTIVE SUMMARY:
+[2–3 frank sentences describing the overall patterns and themes you see]
+
+QUICK WIN:
+[The single change that would have the biggest immediate impact on bookings if implemented tomorrow]
+
+BOOKING RATE:
+[Estimate how many of the viable leads were actually booked, based on the data]
+
+TOP 5 TRAINING PRIORITIES:
+Rank by expected impact on bookings. For each:
+
+#1 — [Short punchy title]
+Problem: [What handlers are consistently doing wrong or missing]
+Evidence: [2–3 specific examples from the calls]
+What to Train: [Exactly what to teach — include specific words/phrases handlers should use]
+Expected Impact: [Why fixing this will directly increase bookings or reduce comparison shopping]
+
+#2 — [Title]
+Problem:
+Evidence:
+What to Train:
+Expected Impact:
+
+#3 — [Title]
+Problem:
+Evidence:
+What to Train:
+Expected Impact:
+
+#4 — [Title]
+Problem:
+Evidence:
+What to Train:
+Expected Impact:
+
+#5 — [Title]
+Problem:
+Evidence:
+What to Train:
+Expected Impact:
+
+--- PASTE CALL DATA BELOW THIS LINE ---
+
+[paste call summaries, one per section, separated by --- ]
+
+
+================================================================================
+TIPS FOR BEST RESULTS ON CLAUDE.AI
+================================================================================
+
+• Use Prompt 1 or Prompt 2 for individual call review with an MP3 upload.
+  Claude.ai supports audio — drag the .mp3 into the chat window.
+
+• Use Prompt 3 if you already have a transcript (faster, no audio processing).
+
+• Use Prompt 4 for monthly or weekly training reviews. Paste the "Call Summary"
+  and "Sales Analysis" sections from multiple individual analyses as your input.
+
+• For the best audio analysis, use claude.ai on the web (not the mobile app)
+  with a Claude 3.5 Sonnet or Claude 3 Opus model selected.
+
+• MP3 files work best. If your recording is in another format (.m4a, .wav),
+  convert it to MP3 first using a free tool like Audacity or Zamzar.
+
+• If a call has background noise or a very thick accent, add this line to the
+  top of any prompt: "Note: the audio quality is imperfect — do your best
+  to transcribe accurately and note any sections that were unclear."
+
+================================================================================

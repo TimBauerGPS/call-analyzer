@@ -20,6 +20,14 @@ const DEFAULT_SALES_TIPS = `Evaluate this call against the four critical sales g
 
 Finish with: What was the single most important missed opportunity, and what should the handler have said?`
 
+const DEFAULT_META_PROMPT = `You are a sales training consultant for a restoration company (water damage, fire, mold). You are reviewing a batch of inbound call analyses to identify the most impactful training opportunities.
+
+Your four core goals are:
+1. BOOK THE APPOINTMENT — Get every viable lead committed to an inspection before the call ends
+2. ELIMINATE COMPARISON SHOPPING — Make the caller feel no need to call other companies
+3. CONTROL THE FUTURE STATE — Walk every caller through what happens next so they feel mentally committed
+4. CLOSE TODAY — Secure a commitment on every call, same day`
+
 // --- Helpers ---
 function today() { return new Date().toISOString().slice(0, 10) }
 function daysAgo(n) {
@@ -47,6 +55,16 @@ export default function Dashboard({ session }) {
   const [metaDateMode, setMetaDateMode] = useState('all')  // 'all' | 'range'
   const [metaStart, setMetaStart] = useState(daysAgo(90))
   const [metaEnd, setMetaEnd] = useState(today())
+  // Master user: partner companies (multi-CallRail accounts)
+  const [partners, setPartners] = useState([])
+  const [selectedPartnerId, setSelectedPartnerId] = useState('')
+  const [partnerForm, setPartnerForm] = useState({ id: null, company_name: '', callrail_api_key: '', callrail_account_id: '' })
+  const [partnerSaving, setPartnerSaving] = useState(false)
+  const [partnerError, setPartnerError] = useState(null)
+  const [partnerSuccess, setPartnerSuccess] = useState(null)
+
+  const [metaPartner, setMetaPartner] = useState('')   // '' = all partners
+  const [metaPrompt, setMetaPrompt] = useState(DEFAULT_META_PROMPT)
   const [metaLoading, setMetaLoading] = useState(false)
   const [metaResult, setMetaResult] = useState(null)
   const [metaError, setMetaError] = useState(null)
@@ -77,6 +95,8 @@ export default function Dashboard({ session }) {
   const [membership, setMembership] = useState(null)
   // True if this user is in the super_admins table (cross-company management)
   const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  // True if user_settings.is_master_admin = true — manages multiple partner companies
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false)
 
   // Team management (admin only)
   const [teamMembers, setTeamMembers] = useState([])        // regular admin: flat list
@@ -120,11 +140,16 @@ export default function Dashboard({ session }) {
   // Derived
   const isAdmin = membership?.role === 'admin' || isSuperAdmin
   const isMember = !!membership && !isAdmin   // has a company but not admin
+  // Master admin: flagged in user_settings.is_master_admin — manages multiple partner companies
+  const isMasterUser = isMasterAdmin
   // Members can't configure keys — presume configured if they have a company assignment.
   // Admins check their actual userSettings (loaded from company_settings).
+  // Master admin is configured if they have an OpenAI key + at least one partner with CallRail keys.
   const keysConfigured = isMember
     ? !!membership?.companyId
-    : !!(userSettings?.callrail_api_key && userSettings?.callrail_account_id && userSettings?.openai_api_key)
+    : isMasterUser
+      ? !!(userSettings?.openai_api_key && partners.some(p => p.callrail_api_key))
+      : !!(userSettings?.callrail_api_key && userSettings?.callrail_account_id && userSettings?.openai_api_key)
   const companyName = membership?.companyName || null
 
   const authHeader = () => ({ Authorization: `Bearer ${session.access_token}` })
@@ -133,6 +158,7 @@ export default function Dashboard({ session }) {
   useEffect(() => {
     loadCalls()
     loadMembership()   // loadMembership calls loadSettings once role is known
+    loadPartners()
   }, [])
 
   // Load team members once we know the user is an admin or super admin
@@ -149,6 +175,52 @@ export default function Dashboard({ session }) {
       .order('call_date', { ascending: false })
       .limit(500)
     if (!error) setCalls(data || [])
+  }
+
+  async function loadPartners() {
+    const { data } = await supabase
+      .from('user_partners')
+      .select('*')
+      .order('display_order', { ascending: true })
+    if (data) setPartners(data)
+  }
+
+  async function savePartner() {
+    const { company_name, callrail_api_key, callrail_account_id, id } = partnerForm
+    if (!company_name.trim()) { setPartnerError('Company name is required.'); return }
+    if (!callrail_api_key.trim()) { setPartnerError('CallRail API key is required.'); return }
+    if (!callrail_account_id.trim()) { setPartnerError('CallRail Account ID is required.'); return }
+    setPartnerSaving(true)
+    setPartnerError(null)
+    setPartnerSuccess(null)
+    try {
+      const row = {
+        user_id: session.user.id,
+        company_name: company_name.trim(),
+        callrail_api_key: callrail_api_key.trim(),
+        callrail_account_id: callrail_account_id.trim(),
+      }
+      let err
+      if (id) {
+        ;({ error: err } = await supabase.from('user_partners').update(row).eq('id', id))
+      } else {
+        ;({ error: err } = await supabase.from('user_partners').insert(row))
+      }
+      if (err) throw new Error(err.message)
+      setPartnerSuccess(id ? 'Partner updated.' : 'Partner added.')
+      setPartnerForm({ id: null, company_name: '', callrail_api_key: '', callrail_account_id: '' })
+      await loadPartners()
+    } catch (e) {
+      setPartnerError(e.message)
+    } finally {
+      setPartnerSaving(false)
+    }
+  }
+
+  async function deletePartner(partnerId) {
+    await supabase.from('user_partners').delete().eq('id', partnerId)
+    setPartners(ps => ps.filter(p => p.id !== partnerId))
+    if (selectedPartnerId === partnerId) setSelectedPartnerId('')
   }
 
   // Loads company membership + super admin status, then loads settings with role context.
@@ -194,8 +266,8 @@ export default function Dashboard({ session }) {
         .eq('company_id', companyId)
         .single()
       if (cs) apiKeys = cs
-    } else if (isAdminUser && !companyId) {
-      // Super admin not in any company: fall back to their own user_settings
+    } else if (!companyId) {
+      // Super admin with no company OR master admin: use their own user_settings
       const { data: us } = await supabase
         .from('user_settings')
         .select('callrail_api_key, callrail_account_id, openai_api_key')
@@ -204,13 +276,15 @@ export default function Dashboard({ session }) {
     }
     // Members: no API keys loaded — they can't see or change them
 
-    // Sales tips prompt: always per-user
+    // Sales tips prompt + master admin flag: always per-user
     const { data: us } = await supabase
       .from('user_settings')
-      .select('sales_tips_prompt')
+      .select('sales_tips_prompt, is_master_admin')
       .single()
 
-    if (isAdminUser) {
+    if (us?.is_master_admin) setIsMasterAdmin(true)
+
+    if (isAdminUser || !companyId) {
       const combined = {
         callrail_api_key:    apiKeys.callrail_api_key    || null,
         callrail_account_id: apiKeys.callrail_account_id || null,
@@ -224,10 +298,9 @@ export default function Dashboard({ session }) {
         openai_api_key:      combined.openai_api_key      || '',
         sales_tips_prompt:   combined.sales_tips_prompt   || DEFAULT_SALES_TIPS,
       })
-      // Open Settings automatically for first-time admin setup
-      if (!combined.callrail_api_key || !combined.openai_api_key) {
-        setSettingsOpen(true)
-      }
+      // Open Settings automatically for first-time setup
+      const needsSetup = isMasterAdmin ? !combined.openai_api_key : (!combined.callrail_api_key || !combined.openai_api_key)
+      if (needsSetup) setSettingsOpen(true)
     } else {
       // Members only get the sales tips prompt (read-only, used by backend)
       setSettingsForm(f => ({ ...f, sales_tips_prompt: us?.sales_tips_prompt || DEFAULT_SALES_TIPS }))
@@ -261,9 +334,11 @@ export default function Dashboard({ session }) {
     setMetaError(null)
     setMetaResult(null)
     try {
-      const body = metaDateMode === 'range'
-        ? { startDate: metaStart, endDate: metaEnd }
-        : {}
+      const body = {
+        instructionPrompt: metaPrompt,
+        ...(metaDateMode === 'range' ? { startDate: metaStart, endDate: metaEnd } : {}),
+        ...(metaPartner ? { partnerCompany: metaPartner } : {}),
+      }
       const res = await fetch(API('openai-meta-analyze'), {
         method: 'POST',
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
@@ -357,9 +432,10 @@ export default function Dashboard({ session }) {
       await loadSettings(isAdmin, membership?.companyId)
       setSettingsSaved(true)
       setTimeout(() => setSettingsSaved(false), 3000)
-      if (settingsForm.callrail_api_key && settingsForm.callrail_account_id && settingsForm.openai_api_key) {
-        setSettingsOpen(false)
-      }
+      const canClose = isMasterAdmin
+        ? !!settingsForm.openai_api_key
+        : !!(settingsForm.callrail_api_key && settingsForm.callrail_account_id && settingsForm.openai_api_key)
+      if (canClose) setSettingsOpen(false)
     } else {
       setSettingsError('Save failed: ' + error.message)
     }
@@ -392,7 +468,7 @@ export default function Dashboard({ session }) {
       setAddUserError('Password is required for new users.')
       return
     }
-    if (isSuperAdmin) {
+    if (isSuperAdmin && newUserRole !== 'master_admin') {
       if (!newUserCompanyId) { setAddUserError('Select a company for this user.'); return }
       if (newUserCompanyId === 'new' && !newUserCompanyName.trim()) {
         setAddUserError('Enter a name for the new company.'); return
@@ -421,11 +497,11 @@ export default function Dashboard({ session }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
       const destName = isSuperAdmin
-        ? (newUserCompanyId === 'new'
-            ? newUserCompanyName.trim()
-            : allCompanies.find(c => c.id === newUserCompanyId)?.name || 'the company')
-        : (companyName || 'your team')
-      setAddUserSuccess(`✓ ${newUserEmail.trim()} added to ${destName}`)
+        ? newUserRole === 'master_admin'
+          ? 'as Master Admin'
+          : `to ${newUserCompanyId === 'new' ? newUserCompanyName.trim() : allCompanies.find(c => c.id === newUserCompanyId)?.name || 'the company'}`
+        : `to ${companyName || 'your team'}`
+      setAddUserSuccess(`✓ ${newUserEmail.trim()} added ${destName}`)
       setNewUserEmail('')
       setNewUserPassword('')
       setNewUserCompanyId('')
@@ -502,13 +578,38 @@ export default function Dashboard({ session }) {
   }
 
   // --- CSV job data ---
-  async function handleCSVLoaded({ jobMap: newJobMap, rowCount }) {
+  async function handleCSVLoaded({ jobMap: newJobMap, rowCount, hasCompanyColumn }) {
     setJobMap(newJobMap)
     setCsvRowCount(rowCount || 0)
     const now = new Date().toISOString()
     setCsvUploadedAt(now)
     localStorage.setItem('csvUploadedAt', now)
     localStorage.setItem('csvRowCount', String(rowCount || 0))
+
+    // Master user: auto-register any new company names found in the CSV
+    if (hasCompanyColumn && !membership) {
+      const csvCompanies = [...new Set(
+        [...newJobMap.values()]
+          .map(j => j.partnerCompany)
+          .filter(Boolean)
+      )]
+      const { data: existing } = await supabase.from('user_partners').select('company_name')
+      const existingNames = new Set((existing || []).map(p => p.company_name))
+      const toAdd = csvCompanies.filter(name => !existingNames.has(name))
+      if (toAdd.length > 0) {
+        await supabase.from('user_partners').insert(
+          toAdd.map((name, i) => ({
+            user_id: session.user.id,
+            company_name: name,
+            display_order: (existing?.length || 0) + i,
+          }))
+        )
+        await loadPartners()
+        setCsvMatchMessage(`✓ Auto-added ${toAdd.length} new partner${toAdd.length === 1 ? '' : 's'}: ${toAdd.join(', ')} — add their CallRail keys in Settings`)
+        setTimeout(() => setCsvMatchMessage(null), 10000)
+        return
+      }
+    }
 
     setCsvMatchMessage('Matching existing calls with Albi data…')
     const matched = await retroactivelyMatchCSV(newJobMap)
@@ -549,9 +650,24 @@ export default function Dashboard({ session }) {
     setShowFetchPrompt(false)
 
     try {
-      const { calls: rawCalls } = await apiFetch(
-        `callrail-fetch?start=${dateRange.start}&end=${dateRange.end}`
-      )
+      // Master admins: fetch from selected partner or all partners in parallel
+      let rawCalls = []
+      if (isMasterAdmin && !selectedPartnerId && partners.length > 0) {
+        setFetchMessage(`Fetching calls from ${partners.length} partner companies…`)
+        const results = await Promise.all(
+          partners.map(p =>
+            apiFetch(`callrail-fetch?start=${dateRange.start}&end=${dateRange.end}&partnerId=${p.id}`)
+              .then(res => (res.calls || []).map(c => ({ ...c, _partnerId: p.id, _partnerName: p.company_name })))
+              .catch(() => [])
+          )
+        )
+        rawCalls = results.flat()
+      } else {
+        const partnerParam = selectedPartnerId ? `&partnerId=${selectedPartnerId}` : ''
+        const res = await apiFetch(`callrail-fetch?start=${dateRange.start}&end=${dateRange.end}${partnerParam}`)
+        const partnerName = selectedPartnerId ? partners.find(p => p.id === selectedPartnerId)?.company_name : null
+        rawCalls = (res.calls || []).map(c => ({ ...c, _partnerName: partnerName || null }))
+      }
 
       const eligible = rawCalls.filter(c => c.duration >= 60 && c.recording)
       setFetchMessage(`${eligible.length} eligible calls found. Saving…`)
@@ -582,6 +698,7 @@ export default function Dashboard({ session }) {
           customer_name:    jobData.customerName || null,
           albi_url:         jobData.albiUrl      || null,
           contract_signed:  jobData.contractSigned || null,
+          partner_company:  call._partnerName || jobData.partnerCompany || null,
           utm_source:       call.utm_source       || null,
           utm_medium:       call.utm_medium       || null,
           utm_campaign:     call.utm_campaign     || null,
@@ -593,18 +710,34 @@ export default function Dashboard({ session }) {
         }
       })
 
-      // ignoreDuplicates: true — skip calls that already exist in the DB entirely.
-      // Prevents re-analyzing calls that are already complete or deep-analyzed.
-      const { data: upserted, error: upsertErr } = await supabase
+      // Insert new calls (ignore duplicates to avoid overwriting complete/deep calls).
+      const { error: upsertErr } = await supabase
         .from('calls')
         .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
-        .select()
 
       if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
 
+      // Also reset any errored calls (no transcript) back to pending so they get retried.
+      const callrailIds = rows.map(r => r.callrail_id)
+      await supabase
+        .from('calls')
+        .update({ analysis_status: 'pending' })
+        .eq('user_id', session.user.id)
+        .in('callrail_id', callrailIds)
+        .eq('analysis_status', 'error')
+        .is('transcript', null)
+
       await loadCalls()
 
-      const toAnalyze = upserted?.filter(c => c.analysis_status === 'pending') || []
+      // Analyze all pending calls (new + retried errors)
+      const { data: pending } = await supabase
+        .from('calls')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .in('callrail_id', callrailIds)
+        .eq('analysis_status', 'pending')
+
+      const toAnalyze = pending || []
       if (toAnalyze.length === 0) {
         setFetchStatus('done')
         setFetchMessage('All calls already analyzed.')
@@ -639,7 +772,7 @@ export default function Dashboard({ session }) {
 
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
-    const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}`)
+    const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}${call.partner_company && partners.find(p => p.company_name === call.partner_company) ? `&partnerId=${partners.find(p => p.company_name === call.partner_company).id}` : ''}`)
     const { transcript } = await apiFetch('openai-transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -675,7 +808,7 @@ export default function Dashboard({ session }) {
       c.id === call.id ? { ...c, analysis_status: 'processing' } : c
     ))
     try {
-      const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}`)
+      const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}${call.partner_company && partners.find(p => p.company_name === call.partner_company) ? `&partnerId=${partners.find(p => p.company_name === call.partner_company).id}` : ''}`)
       const { analysis } = await apiFetch('openai-deep-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -711,6 +844,17 @@ export default function Dashboard({ session }) {
     }
   }, [session.access_token])
 
+  const handleRetryCall = useCallback(async (call) => {
+    setCalls(prev => prev.map(c => c.id === call.id ? { ...c, analysis_status: 'processing' } : c))
+    try {
+      await analyzeCallStandard(call)
+    } catch {
+      await supabase.from('calls').update({ analysis_status: 'error' }).eq('id', call.id)
+      setCalls(prev => prev.map(c => c.id === call.id ? { ...c, analysis_status: 'error' } : c))
+    }
+    await loadCalls()
+  }, [session.access_token])
+
   // --- Render ---
   const fetchButtonDisabled = !keysConfigured || fetchStatus === 'fetching' || fetchStatus === 'processing'
 
@@ -743,6 +887,10 @@ export default function Dashboard({ session }) {
               <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">
                 Super Admin
               </span>
+            ) : isMasterAdmin ? (
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                Master Admin
+              </span>
             ) : isAdmin ? (
               <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
                 Admin
@@ -750,13 +898,13 @@ export default function Dashboard({ session }) {
             ) : null}
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin && !keysConfigured && (
+            {(isAdmin || isMasterAdmin) && !keysConfigured && (
               <span className="text-xs text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
                 ⚠ API keys required
               </span>
             )}
-            {/* Admin-only nav actions */}
-            {isAdmin && (
+            {/* Admin + master admin nav actions */}
+            {(isAdmin || isMasterAdmin) && (
               <>
                 {keysConfigured && (
                   <button
@@ -870,7 +1018,7 @@ export default function Dashboard({ session }) {
 
             {/* Controls */}
             {!metaResult && !metaLoading && (
-              <div className="px-6 py-5 space-y-4">
+              <div className="overflow-y-auto px-6 py-5 space-y-4">
                 {/* Date mode toggle */}
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-2">Calls to include</label>
@@ -890,6 +1038,23 @@ export default function Dashboard({ session }) {
                   </div>
                 </div>
 
+                {/* Partner filter — only shown for master user */}
+                {partners.length > 0 && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-2">Partner Company</label>
+                    <select
+                      value={metaPartner}
+                      onChange={e => setMetaPartner(e.target.value)}
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    >
+                      <option value="">All Partners (combined)</option>
+                      {partners.map(p => (
+                        <option key={p.id} value={p.company_name}>{p.company_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 {metaDateMode === 'range' && (
                   <div className="flex items-center gap-3">
                     <div>
@@ -904,6 +1069,28 @@ export default function Dashboard({ session }) {
                     </div>
                   </div>
                 )}
+
+                {/* Editable analysis prompt */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-gray-700">Analysis Instructions</label>
+                    <button
+                      onClick={() => setMetaPrompt(DEFAULT_META_PROMPT)}
+                      className="text-xs text-indigo-500 hover:text-indigo-700"
+                    >
+                      Reset to default
+                    </button>
+                  </div>
+                  <textarea
+                    value={metaPrompt}
+                    onChange={e => setMetaPrompt(e.target.value)}
+                    rows={8}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs font-mono leading-relaxed focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-y"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">
+                    Customize what the AI focuses on. The JSON output format is fixed and cannot be changed here.
+                  </p>
+                </div>
 
                 {metaError && (
                   <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{metaError}</p>
@@ -931,7 +1118,7 @@ export default function Dashboard({ session }) {
 
             {/* Results */}
             {metaResult && !metaLoading && (
-              <div className="overflow-y-auto px-6 py-5 space-y-5">
+              <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
 
                 {/* Stats bar */}
                 <div className="flex items-center gap-6 bg-indigo-50 rounded-xl px-4 py-3 text-sm">
@@ -987,41 +1174,44 @@ export default function Dashboard({ session }) {
                   ))}
                 </div>
 
-                {/* Export + Email */}
-                <div className="border-t border-gray-100 pt-4 space-y-3">
-                  <div className="flex gap-3 flex-wrap items-center">
-                    <button
-                      onClick={() => downloadMetaPDF(metaResult, companyName || 'Call Analyzer')}
-                      className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors flex items-center gap-2"
-                    >
-                      ⬇ Download PDF
-                    </button>
-                    <button
-                      onClick={() => { setMetaResult(null); setMetaError(null); setMetaEmailSent(false); setMetaEmailError(null); setMetaEmail('') }}
-                      className="text-xs text-gray-500 hover:text-gray-700 underline"
-                    >
-                      ← Run another analysis
-                    </button>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      value={metaEmail}
-                      onChange={e => { setMetaEmail(e.target.value); setMetaEmailSent(false); setMetaEmailError(null) }}
-                      onKeyDown={e => e.key === 'Enter' && sendMetaReport()}
-                      placeholder="Email report to…"
-                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                    />
-                    <button
-                      onClick={sendMetaReport}
-                      disabled={metaEmailSending || !metaEmail.includes('@')}
-                      className="px-4 py-2 text-sm rounded-lg bg-gray-800 text-white hover:bg-gray-900 font-medium disabled:opacity-50 transition-colors whitespace-nowrap"
-                    >
-                      {metaEmailSending ? 'Sending…' : metaEmailSent ? '✓ Sent!' : 'Send Email'}
-                    </button>
-                  </div>
-                  {metaEmailError && <p className="text-xs text-red-600">{metaEmailError}</p>}
+              </div>
+            )}
+
+            {/* Sticky footer — export actions, always visible when results are shown */}
+            {metaResult && !metaLoading && (
+              <div className="border-t border-gray-100 px-6 py-4 flex-shrink-0 space-y-3 bg-white rounded-b-2xl">
+                <div className="flex gap-3 flex-wrap items-center">
+                  <button
+                    onClick={() => downloadMetaPDF(metaResult, companyName || 'Call Analyzer')}
+                    className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium transition-colors"
+                  >
+                    ⬇ Download PDF
+                  </button>
+                  <button
+                    onClick={() => { setMetaResult(null); setMetaError(null); setMetaEmailSent(false); setMetaEmailError(null); setMetaEmail('') }}
+                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                  >
+                    ← Run another analysis
+                  </button>
                 </div>
+                <div className="flex gap-2">
+                  <input
+                    type="email"
+                    value={metaEmail}
+                    onChange={e => { setMetaEmail(e.target.value); setMetaEmailSent(false); setMetaEmailError(null) }}
+                    onKeyDown={e => e.key === 'Enter' && sendMetaReport()}
+                    placeholder="Email report to…"
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  />
+                  <button
+                    onClick={sendMetaReport}
+                    disabled={metaEmailSending || !metaEmail.includes('@')}
+                    className="px-4 py-2 text-sm rounded-lg bg-gray-800 text-white hover:bg-gray-900 font-medium disabled:opacity-50 transition-colors whitespace-nowrap"
+                  >
+                    {metaEmailSending ? 'Sending…' : metaEmailSent ? '✓ Sent!' : 'Send Email'}
+                  </button>
+                </div>
+                {metaEmailError && <p className="text-xs text-red-600">{metaEmailError}</p>}
               </div>
             )}
 
@@ -1031,8 +1221,8 @@ export default function Dashboard({ session }) {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-        {/* ── Settings panel (admins only) ────────────────────── */}
-        {isAdmin && settingsOpen && (
+        {/* ── Settings panel (admins + master admins) ── */}
+        {(isAdmin || isMasterAdmin) && settingsOpen && (
           <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-900">Settings</h2>
@@ -1050,59 +1240,64 @@ export default function Dashboard({ session }) {
                 Your keys are stored securely and used server-side only — they are never exposed to the browser after saving.
               </p>
 
-              {/* CallRail API Key */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">CallRail API Key</label>
-                <div className="relative">
-                  <input
-                    type={showKey.callrail ? 'text' : 'password'}
-                    value={settingsForm.callrail_api_key}
-                    onChange={e => setSettingsForm(f => ({ ...f, callrail_api_key: e.target.value }))}
-                    placeholder="Enter your CallRail API key"
-                    className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                  <button type="button" onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
-                    {showKey.callrail ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                {userSettings?.callrail_api_key && (
-                  <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.callrail_api_key)}</p>
-                )}
-                <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
-                  <p className="text-xs font-medium text-gray-600">How to find your CallRail API Key:</p>
-                  <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5 mt-1">
-                    <li>
-                      Log in to{' '}
-                      <a href="https://sociusmarketing.callreports.com/authenticate/" target="_blank" rel="noreferrer"
-                        className="text-brand-600 hover:underline">sociusmarketing.callreports.com</a>
-                    </li>
-                    <li>Click <strong>Integrations</strong> in the left sidebar</li>
-                    <li>Click <strong>Create API V3 Key</strong></li>
-                    <li>Copy and paste the key above — <strong>it's only visible for 15 minutes</strong></li>
-                  </ol>
-                </div>
-              </div>
+              {/* CallRail API Key + Account ID — hidden for master admins (they use per-partner keys) */}
+              {!isMasterAdmin && (
+                <>
+                  {/* CallRail API Key */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">CallRail API Key</label>
+                    <div className="relative">
+                      <input
+                        type={showKey.callrail ? 'text' : 'password'}
+                        value={settingsForm.callrail_api_key}
+                        onChange={e => setSettingsForm(f => ({ ...f, callrail_api_key: e.target.value }))}
+                        placeholder="Enter your CallRail API key"
+                        className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      <button type="button" onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
+                        {showKey.callrail ? 'Hide' : 'Show'}
+                      </button>
+                    </div>
+                    {userSettings?.callrail_api_key && (
+                      <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.callrail_api_key)}</p>
+                    )}
+                    <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
+                      <p className="text-xs font-medium text-gray-600">How to find your CallRail API Key:</p>
+                      <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5 mt-1">
+                        <li>
+                          Log in to{' '}
+                          <a href="https://sociusmarketing.callreports.com/authenticate/" target="_blank" rel="noreferrer"
+                            className="text-brand-600 hover:underline">sociusmarketing.callreports.com</a>
+                        </li>
+                        <li>Click <strong>Integrations</strong> in the left sidebar</li>
+                        <li>Click <strong>Create API V3 Key</strong></li>
+                        <li>Copy and paste the key above — <strong>it's only visible for 15 minutes</strong></li>
+                      </ol>
+                    </div>
+                  </div>
 
-              {/* CallRail Account ID */}
-              <div>
-                <label className="block text-xs font-medium text-gray-700 mb-1">CallRail Account ID</label>
-                <input
-                  type="text"
-                  value={settingsForm.callrail_account_id}
-                  onChange={e => setSettingsForm(f => ({ ...f, callrail_account_id: e.target.value }))}
-                  placeholder="e.g. 123456789"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
-                />
-                <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
-                  <p className="text-xs font-medium text-gray-600">How to find your Account ID:</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    While logged in, look at the URL in your browser. Your Account ID is the
-                    number after <code className="bg-gray-100 px-1 rounded">/a/</code> — for example:<br />
-                    <span className="font-mono text-gray-600">sociusmarketing.callreports.com/analytics/a/<strong className="text-brand-700">123456789</strong>/</span>
-                  </p>
-                </div>
-              </div>
+                  {/* CallRail Account ID */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">CallRail Account ID</label>
+                    <input
+                      type="text"
+                      value={settingsForm.callrail_account_id}
+                      onChange={e => setSettingsForm(f => ({ ...f, callrail_account_id: e.target.value }))}
+                      placeholder="e.g. 123456789"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <div className="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-0.5">
+                      <p className="text-xs font-medium text-gray-600">How to find your Account ID:</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        While logged in, look at the URL in your browser. Your Account ID is the
+                        number after <code className="bg-gray-100 px-1 rounded">/a/</code> — for example:<br />
+                        <span className="font-mono text-gray-600">sociusmarketing.callreports.com/analytics/a/<strong className="text-brand-700">123456789</strong>/</span>
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* OpenAI API Key */}
               <div>
@@ -1181,6 +1376,103 @@ export default function Dashboard({ session }) {
                 {settingsSaving ? 'Saving…' : 'Save Settings'}
               </button>
             </div>
+
+            {/* ── Partner Companies (master admin only) ── */}
+            {isMasterAdmin && (
+              <div className="pt-2 border-t border-gray-100 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Partner Companies</h3>
+                  <span className="text-xs text-gray-400">Each partner has its own CallRail account</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Add one entry per partner company. Your OpenAI API key above is used for all AI analysis — partners never share your AI billing.
+                </p>
+
+                {/* Existing partners list */}
+                {partners.length > 0 && (
+                  <div className="space-y-2">
+                    {partners.map(p => (
+                      <div key={p.id} className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <div>
+                          <span className="font-medium text-gray-900">{p.company_name}</span>
+                          {p.callrail_account_id && (
+                            <span className="ml-2 text-xs text-gray-400">Acct: {p.callrail_account_id}</span>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setPartnerForm({ id: p.id, company_name: p.company_name, callrail_api_key: p.callrail_api_key || '', callrail_account_id: p.callrail_account_id || '' })}
+                            className="text-xs text-indigo-600 hover:text-indigo-800"
+                          >Edit</button>
+                          <button
+                            onClick={() => deletePartner(p.id)}
+                            className="text-xs text-red-500 hover:text-red-700"
+                          >Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add / edit form */}
+                <div className="space-y-3 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <p className="text-xs font-semibold text-gray-700">
+                    {partnerForm.id ? 'Edit Partner' : 'Add Partner'}
+                  </p>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Company Name</label>
+                      <input
+                        type="text"
+                        value={partnerForm.company_name}
+                        onChange={e => setPartnerForm(f => ({ ...f, company_name: e.target.value }))}
+                        placeholder="e.g. Acme Restoration"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">CallRail API Key</label>
+                      <input
+                        type="password"
+                        value={partnerForm.callrail_api_key}
+                        onChange={e => setPartnerForm(f => ({ ...f, callrail_api_key: e.target.value }))}
+                        placeholder="Partner's CallRail API key"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">CallRail Account ID</label>
+                      <input
+                        type="text"
+                        value={partnerForm.callrail_account_id}
+                        onChange={e => setPartnerForm(f => ({ ...f, callrail_account_id: e.target.value }))}
+                        placeholder="e.g. 123456789"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                    </div>
+                  </div>
+                  {partnerError && <p className="text-xs text-red-600">{partnerError}</p>}
+                  {partnerSuccess && <p className="text-xs text-green-600">✓ {partnerSuccess}</p>}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={savePartner}
+                      disabled={partnerSaving}
+                      className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 font-medium"
+                    >
+                      {partnerSaving ? 'Saving…' : partnerForm.id ? 'Update Partner' : 'Add Partner'}
+                    </button>
+                    {partnerForm.id && (
+                      <button
+                        onClick={() => { setPartnerForm({ id: null, company_name: '', callrail_api_key: '', callrail_account_id: '' }); setPartnerError(null); setPartnerSuccess(null) }}
+                        className="px-4 py-2 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Change Password */}
             <div className="pt-2 border-t border-gray-100 space-y-3">
@@ -1340,44 +1632,52 @@ export default function Dashboard({ session }) {
                     </p>
                   )}
 
-                  {/* Super admin extras: company selector + role */}
+                  {/* Super admin extras: role + company selector */}
                   {isSuperAdmin && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Company</label>
-                        <select
-                          value={newUserCompanyId}
-                          onChange={e => { setNewUserCompanyId(e.target.value); setNewUserCompanyName(''); setAddUserError(null) }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                        >
-                          <option value="">— Select company —</option>
-                          {allCompanies.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                          <option value="new">＋ New company…</option>
-                        </select>
-                        {newUserCompanyId === 'new' && (
-                          <input
-                            type="text"
-                            value={newUserCompanyName}
-                            onChange={e => setNewUserCompanyName(e.target.value)}
-                            placeholder="Company name"
-                            autoFocus
-                            className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                        )}
-                      </div>
+                    <div className="space-y-3">
                       <div>
                         <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
                         <select
                           value={newUserRole}
-                          onChange={e => setNewUserRole(e.target.value)}
+                          onChange={e => { setNewUserRole(e.target.value); setNewUserCompanyId(''); setNewUserCompanyName(''); setAddUserError(null) }}
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
                         >
                           <option value="member">Member — view &amp; analyze calls</option>
                           <option value="admin">Admin — manage their company's team</option>
+                          <option value="master_admin">Master Admin — manage multiple partner companies</option>
                         </select>
                       </div>
+                      {newUserRole !== 'master_admin' && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Company</label>
+                          <select
+                            value={newUserCompanyId}
+                            onChange={e => { setNewUserCompanyId(e.target.value); setNewUserCompanyName(''); setAddUserError(null) }}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          >
+                            <option value="">— Select company —</option>
+                            {allCompanies.map(c => (
+                              <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                            <option value="new">＋ New company…</option>
+                          </select>
+                          {newUserCompanyId === 'new' && (
+                            <input
+                              type="text"
+                              value={newUserCompanyName}
+                              onChange={e => setNewUserCompanyName(e.target.value)}
+                              placeholder="Company name"
+                              autoFocus
+                              className="mt-2 w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                          )}
+                        </div>
+                      )}
+                      {newUserRole === 'master_admin' && (
+                        <p className="text-xs text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2">
+                          Master admins are not assigned to a company — they manage multiple partner companies with their own CallRail accounts.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1425,8 +1725,8 @@ export default function Dashboard({ session }) {
           </div>
         )}
 
-        {/* First-time setup nudge (admins only) */}
-        {isAdmin && !keysConfigured && !settingsOpen && (
+        {/* First-time setup nudge (admins + master admins) */}
+        {(isAdmin || isMasterAdmin) && !keysConfigured && !settingsOpen && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-5 text-center">
             <p className="text-sm font-medium text-amber-800 mb-1">API keys required before fetching calls</p>
             <p className="text-xs text-amber-600 mb-4">Add your CallRail and OpenAI credentials in Settings.</p>
@@ -1488,6 +1788,18 @@ export default function Dashboard({ session }) {
             </h2>
             <div className="flex flex-wrap items-center gap-3">
               <DateRangePicker start={dateRange.start} end={dateRange.end} onChange={setDateRange} />
+              {partners.length > 0 && (
+                <select
+                  value={selectedPartnerId}
+                  onChange={e => setSelectedPartnerId(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                >
+                  <option value="">All Partners</option>
+                  {partners.map(p => (
+                    <option key={p.id} value={p.id}>{p.company_name}</option>
+                  ))}
+                </select>
+              )}
               <button
                 onClick={handleFetchCalls}
                 disabled={fetchButtonDisabled}
@@ -1516,7 +1828,7 @@ export default function Dashboard({ session }) {
 
         {/* Call list */}
         {calls.length > 0 ? (
-          <CallList calls={calls} onDeepAnalyze={handleDeepAnalyze} />
+          <CallList calls={calls} onDeepAnalyze={handleDeepAnalyze} onRetry={handleRetryCall} />
         ) : (
           <div className="text-center py-20 text-gray-400">
             <svg className="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">

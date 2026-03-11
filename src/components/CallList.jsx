@@ -28,19 +28,29 @@ function FilterSelect({ label, value, onChange, options }) {
   )
 }
 
-export default function CallList({ calls, onDeepAnalyze }) {
+export default function CallList({ calls, onDeepAnalyze, onRetry }) {
   const [sort, setSort] = useState('date_desc')
   const [filterHandler, setFilterHandler] = useState('all')
   const [filterViable, setFilterViable] = useState('all')
   const [filterScheduled, setFilterScheduled] = useState('all')
   const [filterPpc, setFilterPpc] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [filterAlbi, setFilterAlbi] = useState('all')
+  const [filterPartner, setFilterPartner] = useState('all')
   const [search, setSearch] = useState('')
 
   // Build unique handler list for dropdown
   const handlerOptions = useMemo(() => {
     const names = [...new Set(calls.map(c => c.handler_name).filter(Boolean))].sort()
     return [{ value: 'all', label: 'All Handlers' }, ...names.map(n => ({ value: n, label: n }))]
+  }, [calls])
+
+  // Build partner options (only shown if any calls have partner_company set)
+  const partnerOptions = useMemo(() => {
+    const names = [...new Set(calls.map(c => c.partner_company).filter(Boolean))].sort()
+    return names.length > 0
+      ? [{ value: 'all', label: 'All Partners' }, ...names.map(n => ({ value: n, label: n }))]
+      : []
   }, [calls])
 
   const filtered = useMemo(() => {
@@ -56,11 +66,18 @@ export default function CallList({ calls, onDeepAnalyze }) {
       )
     }
 
+    const hasAlbi = c => !!(c.customer_name || c.albi_url || c.job_id)
+
     if (filterHandler !== 'all') result = result.filter(c => c.handler_name === filterHandler)
     if (filterViable !== 'all') result = result.filter(c => c.viable_lead === (filterViable === 'yes' ? 'Yes' : 'No'))
     if (filterScheduled !== 'all') result = result.filter(c => c.scheduled === (filterScheduled === 'yes'))
     if (filterPpc !== 'all') result = result.filter(c => c.is_ppc === (filterPpc === 'yes'))
     if (filterStatus !== 'all') result = result.filter(c => c.analysis_status === filterStatus)
+    if (filterAlbi === 'all_albi')    result = result.filter(c => hasAlbi(c))
+    if (filterAlbi === 'signed')      result = result.filter(c => hasAlbi(c) && c.contract_signed)
+    if (filterAlbi === 'pending')     result = result.filter(c => hasAlbi(c) && c.job_status !== 'Closed' && c.job_status !== 'Lost')
+    if (filterAlbi === 'lost')        result = result.filter(c => hasAlbi(c) && c.job_status === 'Lost')
+    if (filterPartner !== 'all')      result = result.filter(c => c.partner_company === filterPartner)
 
     result.sort((a, b) => {
       switch (sort) {
@@ -75,7 +92,7 @@ export default function CallList({ calls, onDeepAnalyze }) {
     })
 
     return result
-  }, [calls, sort, filterHandler, filterViable, filterScheduled, filterPpc, filterStatus, search])
+  }, [calls, sort, filterHandler, filterViable, filterScheduled, filterPpc, filterStatus, filterAlbi, filterPartner, search])
 
   return (
     <div>
@@ -135,6 +152,26 @@ export default function CallList({ calls, onDeepAnalyze }) {
             { value: 'error', label: 'Error' },
           ]}
         />
+        {partnerOptions.length > 0 && (
+          <FilterSelect
+            label="Partner"
+            value={filterPartner}
+            onChange={setFilterPartner}
+            options={partnerOptions}
+          />
+        )}
+        <FilterSelect
+          label="Albi Leads"
+          value={filterAlbi}
+          onChange={setFilterAlbi}
+          options={[
+            { value: 'all',      label: 'All Calls' },
+            { value: 'all_albi', label: 'All Albi Leads' },
+            { value: 'signed',   label: 'Signed Albi Leads' },
+            { value: 'pending',  label: 'Pending Albi' },
+            { value: 'lost',     label: 'Lost Albi' },
+          ]}
+        />
 
         <div className="h-4 w-px bg-gray-200" />
 
@@ -156,7 +193,7 @@ export default function CallList({ calls, onDeepAnalyze }) {
       ) : (
         <div className="space-y-3">
           {filtered.map(call => (
-            <CallCard key={call.id} call={call} onDeepAnalyze={onDeepAnalyze} />
+            <CallCard key={call.id} call={call} onDeepAnalyze={onDeepAnalyze} onRetry={onRetry} />
           ))}
         </div>
       )}

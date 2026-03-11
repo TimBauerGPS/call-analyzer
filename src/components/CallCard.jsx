@@ -75,13 +75,15 @@ function formatDate(iso) {
   })
 }
 
-export default function CallCard({ call, onDeepAnalyze }) {
+export default function CallCard({ call, onDeepAnalyze, onRetry }) {
   const [expanded, setExpanded] = useState(false)
   const [confirmDeep, setConfirmDeep] = useState(false)
   const [deepLoading, setDeepLoading] = useState(false)
+  const [retryLoading, setRetryLoading] = useState(false)
 
   const isDeep = call.analysis_tier === 'deep'
   const canDeepAnalyze = call.analysis_status === 'complete' && !isDeep && onDeepAnalyze
+  const canRetry = call.analysis_status === 'error' && onRetry
 
   async function handleDeepConfirm() {
     setConfirmDeep(false)
@@ -347,6 +349,28 @@ export default function CallCard({ call, onDeepAnalyze }) {
                 </button>
               )}
             </div>
+
+            {canRetry && (
+              <button
+                onClick={async e => {
+                  e.stopPropagation()
+                  setRetryLoading(true)
+                  await onRetry(call)
+                  setRetryLoading(false)
+                }}
+                disabled={retryLoading}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+              >
+                {retryLoading ? (
+                  <span className="animate-spin inline-block w-3 h-3 border border-red-600 border-t-transparent rounded-full" />
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                )}
+                {retryLoading ? 'Retrying…' : 'Retry Analysis'}
+              </button>
+            )}
 
             {canDeepAnalyze && (
               <button

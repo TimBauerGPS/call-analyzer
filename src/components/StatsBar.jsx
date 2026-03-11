@@ -24,9 +24,9 @@ export default function StatsBar({ calls }) {
 
   const stats = [
     { label: 'Total Calls',    value: calls.length },
-    { label: 'Viable Leads',   value: `${viableCount} (${pct(viableCount, complete.length)}%)` },
-    { label: 'Scheduled',      value: `${scheduled} (${pct(scheduled, complete.length)}%)` },
-    { label: 'PPC',            value: `${ppc} (${pct(ppc, complete.length)}%)` },
+    { label: 'Viable Leads',   value: `${viableCount} (${pct(viableCount, calls.length)}%)` },
+    { label: 'Scheduled',      value: `${scheduled} (${pct(scheduled, calls.length)}%)` },
+    { label: 'PPC',            value: `${ppc} (${pct(ppc, calls.length)}%)` },
     { label: 'Avg Sentiment',  value: avgSentiment != null ? `${avgSentiment}/100` : '—' },
     {
       label: 'Added to Albi',

@@ -26,7 +26,7 @@ export const handler = async (event) => {
 
   let settings
   try {
-    ;({ settings } = await getSettings(event.headers['authorization']))
+    ;({ settings } = await getSettings(event.headers['authorization'], { requireCallRail: false }))
   } catch (err) {
     return json(err.message.startsWith('Unauthorized') ? 401 : 400, { error: err.message })
   }

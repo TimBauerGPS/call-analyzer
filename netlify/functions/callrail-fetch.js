@@ -8,14 +8,13 @@
 import { getSettings, jsonResponse as json } from './_getSettings.js'
 
 export const handler = async (event) => {
+  const { start, end, partnerId } = event.queryStringParameters || {}
   let settings
   try {
-    ;({ settings } = await getSettings(event.headers['authorization']))
+    ;({ settings } = await getSettings(event.headers['authorization'], { partnerId }))
   } catch (err) {
     return json(err.message.startsWith('Unauthorized') ? 401 : 400, { error: err.message })
   }
-
-  const { start, end } = event.queryStringParameters || {}
   if (!start || !end) return json(400, { error: 'Missing required params: start, end' })
 
   const fields = [

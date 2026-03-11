@@ -10,14 +10,13 @@
 import { getSettings, jsonResponse as json } from './_getSettings.js'
 
 export const handler = async (event) => {
+  const { callId, partnerId } = event.queryStringParameters || {}
   let settings
   try {
-    ;({ settings } = await getSettings(event.headers['authorization']))
+    ;({ settings } = await getSettings(event.headers['authorization'], { partnerId }))
   } catch (err) {
     return json(err.message.startsWith('Unauthorized') ? 401 : 400, { error: err.message })
   }
-
-  const { callId } = event.queryStringParameters || {}
   if (!callId) return json(400, { error: 'Missing required param: callId' })
 
   try {
