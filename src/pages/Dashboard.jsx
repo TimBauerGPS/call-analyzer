@@ -724,24 +724,23 @@ export default function Dashboard({ session }) {
 
       if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
 
-      // Reset all error/pending calls in this batch so they get retried.
+      // Reset ALL error calls for this user to pending so they get retried.
       const callrailIds = rows.map(r => r.callrail_id)
       await supabase
         .from('calls')
         .update({ analysis_status: 'pending' })
         .eq('user_id', session.user.id)
-        .in('callrail_id', callrailIds)
-        .in('analysis_status', ['error', 'pending'])
+        .eq('analysis_status', 'error')
 
       await loadCalls()
 
-      // Analyze all pending calls (new + retried errors/pending)
+      // Analyze all pending/error calls for this user — not just the current batch,
+      // so previously stuck or interrupted calls are always retried on fetch.
       const { data: pending } = await supabase
         .from('calls')
         .select('*')
         .eq('user_id', session.user.id)
-        .in('callrail_id', callrailIds)
-        .eq('analysis_status', 'pending')
+        .in('analysis_status', ['pending', 'error'])
 
       const toAnalyze = pending || []
       if (toAnalyze.length === 0) {
