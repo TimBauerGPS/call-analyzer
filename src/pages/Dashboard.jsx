@@ -752,27 +752,37 @@ export default function Dashboard({ session }) {
       }
 
       setFetchStatus('processing')
-      setFetchMessage(`Analyzing ${toAnalyze.length} call${toAnalyze.length === 1 ? '' : 's'}…`)
+      setFetchMessage(`Queuing ${toAnalyze.length} call${toAnalyze.length === 1 ? '' : 's'} for analysis…`)
 
-      let done = 0
+      // Fire all background jobs (sequential to avoid rate-limiting the audio URL fetches)
+      const jobIds = []
       for (const call of toAnalyze) {
         try {
           await analyzeCallStandard(call)
-          done++
-          setFetchMessage(`Analyzed ${done} / ${toAnalyze.length}…`)
+          jobIds.push(call.id)
+          setFetchMessage(`Queued ${jobIds.length} / ${toAnalyze.length} calls…`)
         } catch {
           await supabase.from('calls').update({ analysis_status: 'error' }).eq('id', call.id)
         }
-        await loadCalls()
       }
 
-      setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
-      setFetchMessage(
-        `Done — ${done} call${done === 1 ? '' : 's'} analyzed.` +
-        (skippedPartners.length > 0
-          ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
-          : '')
-      )
+      if (jobIds.length === 0) {
+        setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
+        setFetchMessage('No calls could be queued for analysis.' + (skippedPartners.length > 0 ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped: ${skippedPartners.join(', ')}` : ''))
+      } else {
+        setFetchMessage(`Analyzing ${jobIds.length} call${jobIds.length === 1 ? '' : 's'} — this may take a few minutes for long recordings…`)
+        await pollUntilDone(jobIds, (done, total) =>
+          setFetchMessage(`Analyzing… ${done} / ${total} complete`)
+        )
+        const complete = jobIds.length - (toAnalyze.length - jobIds.length)
+        setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
+        setFetchMessage(
+          `Done — ${jobIds.length} call${jobIds.length === 1 ? '' : 's'} analyzed.` +
+          (skippedPartners.length > 0
+            ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
+            : '')
+        )
+      }
     } catch (err) {
       setFetchStatus('error')
       setFetchMessage(err.message)
@@ -783,35 +793,34 @@ export default function Dashboard({ session }) {
 
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
-    const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}${call.partner_company && partners.find(p => p.company_name === call.partner_company) ? `&partnerId=${partners.find(p => p.company_name === call.partner_company).id}` : ''}`)
-    const { transcript } = await apiFetch('openai-transcribe', {
+    const partnerSuffix = call.partner_company && partners.find(p => p.company_name === call.partner_company)
+      ? `&partnerId=${partners.find(p => p.company_name === call.partner_company).id}`
+      : ''
+    const { audioUrl } = await apiFetch(`callrail-call?callId=${call.callrail_id}${partnerSuffix}`)
+    // Fire background function — returns 202 immediately; transcribes, analyzes, and
+    // saves results to Supabase asynchronously (no 26s timeout limitation).
+    await apiFetch('process-call-background', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audioUrl }),
+      body: JSON.stringify({ callId: call.id, audioUrl }),
     })
-    const { analysis } = await apiFetch('openai-analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transcript }),
-    })
-    await supabase.from('calls').update({
-      transcript,
-      handler_name:   analysis.handlerName   || null,
-      viable_lead:    analysis.viableLead    || null,
-      introduced:     analysis.introduced    ?? null,
-      scheduled:      analysis.scheduled     ?? null,
-      cb_requested:   analysis.cbRequested   ?? null,
-      notes:          analysis.notes         || null,
-      sales_tips:     analysis.salesTips     || null,
-      is_ppc:         analysis.isPpc         ?? null,
-      was_booked:     analysis.wasBooked     ?? null,
-      sentiment:      analysis.sentiment     || null,
-      sentiment_score: analysis.sentimentScore ?? null,
-      coaching_tips:  analysis.coachingTips  || [],
-      missed_flags:   analysis.missedFlags   || [],
-      analysis_status: 'complete',
-      analysis_tier:   'standard',
-    }).eq('id', call.id)
+  }
+
+  // Polls Supabase every 3s until all background jobs finish (complete or error).
+  async function pollUntilDone(callIds, onProgress) {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      await new Promise(r => setTimeout(r, 3000))
+      const { data } = await supabase
+        .from('calls')
+        .select('id, analysis_status')
+        .in('id', callIds)
+      await loadCalls()
+      const statuses = data || []
+      const complete = statuses.filter(c => c.analysis_status === 'complete').length
+      const processing = statuses.filter(c => c.analysis_status === 'processing').length
+      onProgress?.(complete, callIds.length)
+      if (processing === 0) return
+    }
   }
 
   const handleDeepAnalyze = useCallback(async (call) => {
@@ -859,6 +868,7 @@ export default function Dashboard({ session }) {
     setCalls(prev => prev.map(c => c.id === call.id ? { ...c, analysis_status: 'processing' } : c))
     try {
       await analyzeCallStandard(call)
+      await pollUntilDone([call.id])
     } catch {
       await supabase.from('calls').update({ analysis_status: 'error' }).eq('id', call.id)
       setCalls(prev => prev.map(c => c.id === call.id ? { ...c, analysis_status: 'error' } : c))
