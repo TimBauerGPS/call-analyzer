@@ -28,7 +28,7 @@ function FilterSelect({ label, value, onChange, options }) {
   )
 }
 
-export default function CallList({ calls, onDeepAnalyze, onRetry }) {
+export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] }) {
   const [sort, setSort] = useState('date_desc')
   const [filterHandler, setFilterHandler] = useState('all')
   const [filterViable, setFilterViable] = useState('all')
@@ -45,13 +45,15 @@ export default function CallList({ calls, onDeepAnalyze, onRetry }) {
     return [{ value: 'all', label: 'All Handlers' }, ...names.map(n => ({ value: n, label: n }))]
   }, [calls])
 
-  // Build partner options (only shown if any calls have partner_company set)
+  // Build partner options — prefer the configured partners list; fall back to call data
   const partnerOptions = useMemo(() => {
-    const names = [...new Set(calls.map(c => c.partner_company).filter(Boolean))].sort()
+    const fromPartners = partners.map(p => p.company_name).filter(Boolean).sort()
+    const fromCalls = [...new Set(calls.map(c => c.partner_company).filter(Boolean))].sort()
+    const names = fromPartners.length > 0 ? fromPartners : fromCalls
     return names.length > 0
       ? [{ value: 'all', label: 'All Partners' }, ...names.map(n => ({ value: n, label: n }))]
       : []
-  }, [calls])
+  }, [calls, partners])
 
   const filtered = useMemo(() => {
     let result = [...calls]

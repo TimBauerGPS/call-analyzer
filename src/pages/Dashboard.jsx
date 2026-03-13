@@ -2014,7 +2014,7 @@ export default function Dashboard({ session }) {
 
         {/* Call list */}
         {calls.length > 0 ? (
-          <CallList calls={calls} onDeepAnalyze={handleDeepAnalyze} onRetry={handleRetryCall} />
+          <CallList calls={calls} partners={partners} onDeepAnalyze={handleDeepAnalyze} onRetry={handleRetryCall} />
         ) : (
           <div className="text-center py-20 text-gray-400">
             <svg className="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
