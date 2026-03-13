@@ -1494,14 +1494,18 @@ export default function Dashboard({ session }) {
                   <div className="space-y-2">
                     {partners.map(p => {
                       const hasCredentials = !!(p.callrail_account_id && (p.callrail_api_key || userSettings?.callrail_api_key))
+                      const isMapped = !!p.callrail_account_id
                       return (
                         <div key={p.id} className={`flex items-center justify-between border rounded-lg px-3 py-2 text-sm ${hasCredentials ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                          <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
                             <span className="font-medium text-gray-900 truncate">{p.company_name}</span>
                             {hasCredentials ? (
                               <span className="text-xs text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full flex-shrink-0">✓ Credentials set</span>
                             ) : (
                               <span className="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">⚠ Missing credentials</span>
+                            )}
+                            {isMapped && (
+                              <span className="text-xs text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full flex-shrink-0">🔗 Mapped</span>
                             )}
                           </div>
                           <div className="flex gap-2 flex-shrink-0">
