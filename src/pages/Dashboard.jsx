@@ -721,6 +721,25 @@ export default function Dashboard({ session }) {
         if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
       }
 
+      // Patch partner_company on ALL fetched calls (new + existing).
+      // ignoreDuplicates above skips existing rows, so we do a targeted UPDATE here
+      // that only touches partner_company — analysis data is never overwritten.
+      if (isMasterAdmin && rawCalls.length > 0) {
+        const byPartner = {}
+        for (const call of rawCalls) {
+          if (!call._partnerName) continue
+          if (!byPartner[call._partnerName]) byPartner[call._partnerName] = []
+          byPartner[call._partnerName].push(String(call.id))
+        }
+        for (const [partnerName, ids] of Object.entries(byPartner)) {
+          await supabase
+            .from('calls')
+            .update({ partner_company: partnerName })
+            .eq('user_id', session.user.id)
+            .in('callrail_id', ids)
+        }
+      }
+
       // Reset ALL error calls for this user to pending so they get retried.
       const callrailIds = rows.map(r => r.callrail_id)
       await supabase
