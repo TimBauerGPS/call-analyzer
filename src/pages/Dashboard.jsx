@@ -62,6 +62,12 @@ export default function Dashboard({ session }) {
   const [partnerSaving, setPartnerSaving] = useState(false)
   const [partnerError, setPartnerError] = useState(null)
   const [partnerSuccess, setPartnerSuccess] = useState(null)
+  // CallRail account detection for master admin
+  const [callrailAccounts, setCallrailAccounts] = useState([])
+  const [accountMapOpen, setAccountMapOpen] = useState(false)
+  const [accountMappings, setAccountMappings] = useState({})
+  const [detectingAccounts, setDetectingAccounts] = useState(false)
+  const [detectError, setDetectError] = useState(null)
 
   const [metaPartner, setMetaPartner] = useState('')   // '' = all partners
   const [metaPrompt, setMetaPrompt] = useState(DEFAULT_META_PROMPT)
@@ -148,7 +154,7 @@ export default function Dashboard({ session }) {
   const keysConfigured = isMember
     ? !!membership?.companyId
     : isMasterUser
-      ? !!(userSettings?.openai_api_key && partners.some(p => p.callrail_api_key))
+      ? !!(userSettings?.openai_api_key && partners.some(p => p.callrail_account_id && (p.callrail_api_key || userSettings?.callrail_api_key)))
       : !!(userSettings?.callrail_api_key && userSettings?.callrail_account_id && userSettings?.openai_api_key)
   const companyName = membership?.companyName || null
 
@@ -188,7 +194,7 @@ export default function Dashboard({ session }) {
   async function savePartner() {
     const { company_name, callrail_api_key, callrail_account_id, id } = partnerForm
     if (!company_name.trim()) { setPartnerError('Company name is required.'); return }
-    if (!callrail_api_key.trim()) { setPartnerError('CallRail API key is required.'); return }
+    if (!callrail_api_key.trim() && !userSettings?.callrail_api_key) { setPartnerError('CallRail API key is required — or configure a shared key in the API Keys section above.'); return }
     if (!callrail_account_id.trim()) { setPartnerError('CallRail Account ID is required.'); return }
     setPartnerSaving(true)
     setPartnerError(null)
@@ -784,6 +790,39 @@ export default function Dashboard({ session }) {
     }
   }
 
+  async function handleDetectAccounts() {
+    setDetectingAccounts(true)
+    setDetectError(null)
+    try {
+      const { accounts } = await apiFetch('callrail-list-accounts')
+      setCallrailAccounts(accounts)
+      // Auto-match by name (case-insensitive)
+      const mappings = {}
+      partners.forEach(p => {
+        const match = accounts.find(a => a.name.toLowerCase() === p.company_name.toLowerCase())
+        if (match) mappings[p.id] = match.id
+      })
+      setAccountMappings(mappings)
+      setAccountMapOpen(true)
+    } catch (err) {
+      setDetectError(err.message)
+    } finally {
+      setDetectingAccounts(false)
+    }
+  }
+
+  async function handleApplyMappings() {
+    for (const [partnerId, accountId] of Object.entries(accountMappings)) {
+      if (accountId) {
+        await supabase.from('user_partners')
+          .update({ callrail_account_id: accountId })
+          .eq('id', partnerId)
+      }
+    }
+    await loadPartners()
+    setAccountMapOpen(false)
+  }
+
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
     const partnerSuffix = call.partner_company && partners.find(p => p.company_name === call.partner_company)
@@ -1254,7 +1293,31 @@ export default function Dashboard({ session }) {
                 Your keys are stored securely and used server-side only — they are never exposed to the browser after saving.
               </p>
 
-              {/* CallRail API Key + Account ID — hidden for master admins (they use per-partner keys) */}
+              {/* Shared CallRail API Key — master admins only */}
+              {isMasterAdmin && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Shared CallRail API Key</label>
+                  <div className="relative">
+                    <input
+                      type={showKey.callrail ? 'text' : 'password'}
+                      value={settingsForm.callrail_api_key}
+                      onChange={e => setSettingsForm(f => ({ ...f, callrail_api_key: e.target.value }))}
+                      placeholder="Agency-level key that accesses all partner accounts"
+                      className="w-full px-3 py-2 pr-16 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                    />
+                    <button type="button" onClick={() => setShowKey(k => ({ ...k, callrail: !k.callrail }))}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-700">
+                      {showKey.callrail ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  {userSettings?.callrail_api_key && (
+                    <p className="mt-1 text-xs text-gray-400">Saved: {maskKey(userSettings.callrail_api_key)}</p>
+                  )}
+                  <p className="mt-1 text-xs text-gray-500">Used for all partner companies unless a partner has its own key. Partner companies only need their Account ID.</p>
+                </div>
+              )}
+
+              {/* CallRail API Key + Account ID — regular admins only */}
               {!isMasterAdmin && (
                 <>
                   {/* CallRail API Key */}
@@ -1396,17 +1459,28 @@ export default function Dashboard({ session }) {
               <div className="pt-2 border-t border-gray-100 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Partner Companies</h3>
-                  <span className="text-xs text-gray-400">Each partner has its own CallRail account</span>
+                  <button
+                    onClick={handleDetectAccounts}
+                    disabled={detectingAccounts || !settingsForm.callrail_api_key}
+                    title={!settingsForm.callrail_api_key ? 'Save a Shared CallRail API Key first' : 'Auto-detect accounts from CallRail'}
+                    className="text-xs px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                  >
+                    {detectingAccounts ? (
+                      <span className="animate-spin inline-block w-3 h-3 border border-indigo-600 border-t-transparent rounded-full" />
+                    ) : '🔍'}
+                    {detectingAccounts ? 'Detecting…' : 'Detect Accounts'}
+                  </button>
                 </div>
+                {detectError && <p className="text-xs text-red-600">{detectError}</p>}
                 <p className="text-xs text-gray-500">
-                  Add one entry per partner company. Your OpenAI API key above is used for all AI analysis — partners never share your AI billing.
+                  Add one entry per partner company. Use <strong>Detect Accounts</strong> to auto-fill Account IDs from your shared CallRail key.
                 </p>
 
                 {/* Existing partners list */}
                 {partners.length > 0 && (
                   <div className="space-y-2">
                     {partners.map(p => {
-                      const hasCredentials = !!(p.callrail_api_key && p.callrail_account_id)
+                      const hasCredentials = !!(p.callrail_account_id && (p.callrail_api_key || userSettings?.callrail_api_key))
                       return (
                         <div key={p.id} className={`flex items-center justify-between border rounded-lg px-3 py-2 text-sm ${hasCredentials ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
                           <div className="flex items-center gap-2 min-w-0">
@@ -1450,12 +1524,17 @@ export default function Dashboard({ session }) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 mb-1">CallRail API Key</label>
+                      <label className="block text-xs font-medium text-gray-700 mb-1">
+                        CallRail API Key
+                        {userSettings?.callrail_api_key && (
+                          <span className="ml-2 font-normal text-gray-400">— optional, uses shared key if blank</span>
+                        )}
+                      </label>
                       <input
                         type="password"
                         value={partnerForm.callrail_api_key}
                         onChange={e => setPartnerForm(f => ({ ...f, callrail_api_key: e.target.value }))}
-                        placeholder="Partner's CallRail API key"
+                        placeholder={userSettings?.callrail_api_key ? 'Leave blank to use shared key' : "Partner's CallRail API key"}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
                       />
                     </div>
@@ -1488,6 +1567,51 @@ export default function Dashboard({ session }) {
                         Cancel
                       </button>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Account Mapping Modal ── */}
+            {accountMapOpen && (
+              <div className="fixed inset-0 z-50 flex items-start justify-center pt-10 px-4 bg-black/40 backdrop-blur-sm">
+                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <div>
+                      <h2 className="text-base font-bold text-gray-900">Map CallRail Accounts</h2>
+                      <p className="text-xs text-gray-500 mt-0.5">Found {callrailAccounts.length} account{callrailAccounts.length !== 1 ? 's' : ''}. Match each to a partner company.</p>
+                    </div>
+                    <button onClick={() => setAccountMapOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+                  </div>
+                  <div className="px-6 py-4 space-y-3 max-h-96 overflow-y-auto">
+                    {partners.map(p => (
+                      <div key={p.id} className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-gray-800 w-40 flex-shrink-0 truncate">{p.company_name}</span>
+                        <select
+                          value={accountMappings[p.id] || ''}
+                          onChange={e => setAccountMappings(m => ({ ...m, [p.id]: e.target.value }))}
+                          className="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        >
+                          <option value="">— skip —</option>
+                          {callrailAccounts.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} ({a.id})</option>
+                          ))}
+                        </select>
+                        {accountMappings[p.id] && (
+                          <span className="text-xs text-green-600 flex-shrink-0">✓</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
+                    <button onClick={() => setAccountMapOpen(false)}
+                      className="px-4 py-2 text-sm rounded-lg border border-gray-200 hover:bg-gray-50">
+                      Cancel
+                    </button>
+                    <button onClick={handleApplyMappings}
+                      className="px-4 py-2 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 font-medium">
+                      Apply {Object.values(accountMappings).filter(Boolean).length} Mapping{Object.values(accountMappings).filter(Boolean).length !== 1 ? 's' : ''}
+                    </button>
                   </div>
                 </div>
               </div>

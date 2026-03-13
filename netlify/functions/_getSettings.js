@@ -71,10 +71,23 @@ export async function getSettings(authHeader, { partnerId, requireCallRail = tru
     if (partnerErr || !partner) {
       throw new Error(`Partner not found or access denied (id: ${partnerId}).`)
     }
-    if (!partner.callrail_api_key || !partner.callrail_account_id) {
-      throw new Error(`Partner "${partner.company_name}" is missing CallRail credentials. Add them in Settings → Partner Companies.`)
+    if (!partner.callrail_account_id) {
+      throw new Error(`Partner "${partner.company_name}" is missing a CallRail Account ID. Add it in Settings → Partner Companies.`)
     }
-    apiKeys.callrail_api_key    = partner.callrail_api_key
+    // If partner has its own key, use it. Otherwise fall back to the user's shared key.
+    let partnerApiKey = partner.callrail_api_key
+    if (!partnerApiKey) {
+      const { data: us } = await supabase
+        .from('user_settings')
+        .select('callrail_api_key')
+        .eq('user_id', user.id)
+        .single()
+      partnerApiKey = us?.callrail_api_key
+      if (!partnerApiKey) {
+        throw new Error(`Partner "${partner.company_name}" has no API key and no shared CallRail API key is configured in Settings.`)
+      }
+    }
+    apiKeys.callrail_api_key    = partnerApiKey
     apiKeys.callrail_account_id = partner.callrail_account_id
   }
 
