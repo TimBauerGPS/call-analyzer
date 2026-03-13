@@ -33,6 +33,10 @@ export const handler = async (event) => {
   url.searchParams.set('sort', 'start_time')
   url.searchParams.set('order', 'desc')
   url.searchParams.set('per_page', '250')
+  // Company-filter mode: single parent account with multiple sub-companies
+  if (settings.callrail_company_id) {
+    url.searchParams.set('company_id', settings.callrail_company_id)
+  }
 
   try {
     const res = await fetch(url.toString(), {

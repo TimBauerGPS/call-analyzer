@@ -62,8 +62,10 @@ export default function Dashboard({ session }) {
   const [partnerSaving, setPartnerSaving] = useState(false)
   const [partnerError, setPartnerError] = useState(null)
   const [partnerSuccess, setPartnerSuccess] = useState(null)
-  // CallRail account detection for master admin
-  const [callrailAccounts, setCallrailAccounts] = useState([])
+  // CallRail account/company detection for master admin
+  const [callrailAccounts, setCallrailAccounts] = useState([])     // items to display in modal
+  const [callrailDetectMode, setCallrailDetectMode] = useState('accounts') // 'accounts'|'companies'
+  const [callrailParentAccountId, setCallrailParentAccountId] = useState(null)
   const [accountMapOpen, setAccountMapOpen] = useState(false)
   const [accountMappings, setAccountMappings] = useState({})
   const [detectingAccounts, setDetectingAccounts] = useState(false)
@@ -794,12 +796,14 @@ export default function Dashboard({ session }) {
     setDetectingAccounts(true)
     setDetectError(null)
     try {
-      const { accounts } = await apiFetch('callrail-list-accounts')
-      setCallrailAccounts(accounts)
+      const { items, mode, parentAccountId } = await apiFetch('callrail-list-accounts')
+      setCallrailAccounts(items)
+      setCallrailDetectMode(mode)
+      setCallrailParentAccountId(parentAccountId)
       // Auto-match by name (case-insensitive)
       const mappings = {}
       partners.forEach(p => {
-        const match = accounts.find(a => a.name.toLowerCase() === p.company_name.toLowerCase())
+        const match = items.find(a => a.name.toLowerCase() === p.company_name.toLowerCase())
         if (match) mappings[p.id] = match.id
       })
       setAccountMappings(mappings)
@@ -812,10 +816,19 @@ export default function Dashboard({ session }) {
   }
 
   async function handleApplyMappings() {
-    for (const [partnerId, accountId] of Object.entries(accountMappings)) {
-      if (accountId) {
+    // In company mode, save the parent account ID to user_settings so _getSettings
+    // knows to use company_id filtering instead of direct account access.
+    if (callrailDetectMode === 'companies' && callrailParentAccountId) {
+      await supabase.from('user_settings')
+        .update({ callrail_account_id: callrailParentAccountId })
+        .eq('user_id', session.user.id)
+      // Also reflect in the form so it shows as saved
+      setSettingsForm(f => ({ ...f, callrail_account_id: callrailParentAccountId }))
+    }
+    for (const [partnerId, companyOrAccountId] of Object.entries(accountMappings)) {
+      if (companyOrAccountId) {
         await supabase.from('user_partners')
-          .update({ callrail_account_id: accountId })
+          .update({ callrail_account_id: companyOrAccountId })
           .eq('id', partnerId)
       }
     }
@@ -1462,7 +1475,7 @@ export default function Dashboard({ session }) {
                   <button
                     onClick={handleDetectAccounts}
                     disabled={detectingAccounts || !settingsForm.callrail_api_key}
-                    title={!settingsForm.callrail_api_key ? 'Save a Shared CallRail API Key first' : 'Auto-detect accounts from CallRail'}
+                    title={!settingsForm.callrail_api_key ? 'Save a Shared CallRail API Key first' : 'Auto-detect partner companies or accounts from CallRail'}
                     className="text-xs px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
                   >
                     {detectingAccounts ? (
@@ -1578,8 +1591,14 @@ export default function Dashboard({ session }) {
                 <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
                   <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                     <div>
-                      <h2 className="text-base font-bold text-gray-900">Map CallRail Accounts</h2>
-                      <p className="text-xs text-gray-500 mt-0.5">Found {callrailAccounts.length} account{callrailAccounts.length !== 1 ? 's' : ''}. Match each to a partner company.</p>
+                      <h2 className="text-base font-bold text-gray-900">
+                        {callrailDetectMode === 'companies' ? 'Map CallRail Companies' : 'Map CallRail Accounts'}
+                      </h2>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Found {callrailAccounts.length} {callrailDetectMode === 'companies' ? 'company' : 'account'}{callrailAccounts.length !== 1 ? (callrailDetectMode === 'companies' ? 'ies' : 's') : ''}
+                        {callrailDetectMode === 'companies' && callrailParentAccountId && ` in account ${callrailParentAccountId}`}.
+                        Match each to a partner company.
+                      </p>
                     </div>
                     <button onClick={() => setAccountMapOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
                   </div>

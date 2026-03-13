@@ -74,21 +74,27 @@ export async function getSettings(authHeader, { partnerId, requireCallRail = tru
     if (!partner.callrail_account_id) {
       throw new Error(`Partner "${partner.company_name}" is missing a CallRail Account ID. Add it in Settings → Partner Companies.`)
     }
-    // If partner has its own key, use it. Otherwise fall back to the user's shared key.
-    let partnerApiKey = partner.callrail_api_key
+    // Always load user_settings for shared key + optional parent account ID
+    const { data: userSettingsRow } = await supabase
+      .from('user_settings')
+      .select('callrail_api_key, callrail_account_id')
+      .eq('user_id', user.id)
+      .single()
+    const partnerApiKey = partner.callrail_api_key || userSettingsRow?.callrail_api_key
     if (!partnerApiKey) {
-      const { data: us } = await supabase
-        .from('user_settings')
-        .select('callrail_api_key')
-        .eq('user_id', user.id)
-        .single()
-      partnerApiKey = us?.callrail_api_key
-      if (!partnerApiKey) {
-        throw new Error(`Partner "${partner.company_name}" has no API key and no shared CallRail API key is configured in Settings.`)
-      }
+      throw new Error(`Partner "${partner.company_name}" has no API key and no shared CallRail API key is configured in Settings.`)
     }
-    apiKeys.callrail_api_key    = partnerApiKey
-    apiKeys.callrail_account_id = partner.callrail_account_id
+    apiKeys.callrail_api_key = partnerApiKey
+    // Company-filter mode: if user_settings has a parent account ID, the partner's
+    // callrail_account_id is actually a CallRail company ID within that parent account.
+    // Pass it as callrail_company_id so callrail-fetch can add ?company_id= filter.
+    const sharedAccountId = userSettingsRow?.callrail_account_id
+    if (sharedAccountId) {
+      apiKeys.callrail_account_id = sharedAccountId
+      apiKeys.callrail_company_id = partner.callrail_account_id
+    } else {
+      apiKeys.callrail_account_id = partner.callrail_account_id
+    }
   }
 
   // Fallback: user_settings (backwards compat / super admins / regular users not in a company)
@@ -118,6 +124,7 @@ export async function getSettings(authHeader, { partnerId, requireCallRail = tru
   const settings = {
     callrail_api_key:    apiKeys.callrail_api_key    || null,
     callrail_account_id: apiKeys.callrail_account_id || null,
+    callrail_company_id: apiKeys.callrail_company_id || null,
     openai_api_key:      apiKeys.openai_api_key      || null,
     sales_tips_prompt:   promptData?.sales_tips_prompt || null,
   }
