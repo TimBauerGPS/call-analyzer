@@ -674,18 +674,6 @@ export default function Dashboard({ session }) {
       const eligible = rawCalls.filter(c => c.duration >= 60 && c.recording)
       setFetchMessage(`${eligible.length} eligible calls found. Saving…`)
 
-      if (eligible.length === 0) {
-        setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
-        setFetchMessage(
-          'No new calls with recordings ≥60s in this range.' +
-          (skippedPartners.length > 0
-            ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
-            : '')
-        )
-        processingRef.current = false
-        return
-      }
-
       const rows = eligible.map(call => {
         const phone = normalizePhone(call.customer_phone_number)
         const jobData = jobMap?.get(phone) || {}
@@ -718,11 +706,12 @@ export default function Dashboard({ session }) {
       })
 
       // Insert new calls (ignore duplicates to avoid overwriting complete/deep calls).
-      const { error: upsertErr } = await supabase
-        .from('calls')
-        .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
-
-      if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
+      if (rows.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from('calls')
+          .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
+        if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
+      }
 
       // Reset ALL error calls for this user to pending so they get retried.
       const callrailIds = rows.map(r => r.callrail_id)
@@ -744,8 +733,13 @@ export default function Dashboard({ session }) {
 
       const toAnalyze = pending || []
       if (toAnalyze.length === 0) {
-        setFetchStatus('done')
-        setFetchMessage('All calls already analyzed.')
+        setFetchStatus(skippedPartners.length > 0 ? 'warning' : 'done')
+        setFetchMessage(
+          (rows.length === 0 ? 'No new calls with recordings ≥60s in this range.' : 'All calls already analyzed.') +
+          (skippedPartners.length > 0
+            ? ` ⚠ ${skippedPartners.length} partner${skippedPartners.length === 1 ? '' : 's'} skipped (missing CallRail credentials): ${skippedPartners.join(', ')}`
+            : '')
+        )
         processingRef.current = false
         return
       }
