@@ -724,19 +724,18 @@ export default function Dashboard({ session }) {
 
       if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
 
-      // Also reset any errored calls (no transcript) back to pending so they get retried.
+      // Reset all error/pending calls in this batch so they get retried.
       const callrailIds = rows.map(r => r.callrail_id)
       await supabase
         .from('calls')
         .update({ analysis_status: 'pending' })
         .eq('user_id', session.user.id)
         .in('callrail_id', callrailIds)
-        .eq('analysis_status', 'error')
-        .is('transcript', null)
+        .in('analysis_status', ['error', 'pending'])
 
       await loadCalls()
 
-      // Analyze all pending calls (new + retried errors)
+      // Analyze all pending calls (new + retried errors/pending)
       const { data: pending } = await supabase
         .from('calls')
         .select('*')
