@@ -70,6 +70,8 @@ export default function Dashboard({ session }) {
   const [accountMappings, setAccountMappings] = useState({})
   const [detectingAccounts, setDetectingAccounts] = useState(false)
   const [detectError, setDetectError] = useState(null)
+  const [relinking, setRelinking] = useState(false)
+  const [relinkMessage, setRelinkMessage] = useState(null)
 
   const [metaPartner, setMetaPartner] = useState('')   // '' = all partners
   const [metaPrompt, setMetaPrompt] = useState(DEFAULT_META_PROMPT)
@@ -855,6 +857,46 @@ export default function Dashboard({ session }) {
     setAccountMapOpen(false)
   }
 
+  // Re-link existing calls to partner companies without re-running any analysis.
+  // Fetches call IDs from CallRail per mapped partner, then bulk-updates partner_company in DB.
+  async function handleRelinkCalls() {
+    setRelinking(true)
+    setRelinkMessage(null)
+    try {
+      // Find earliest existing call so we cover the full history
+      const { data: oldest } = await supabase
+        .from('calls')
+        .select('call_date')
+        .eq('user_id', session.user.id)
+        .order('call_date', { ascending: true })
+        .limit(1)
+      const start = oldest?.[0]?.call_date?.slice(0, 10) || daysAgo(365)
+      const end = today()
+
+      const mappedPartners = partners.filter(p => p.callrail_account_id)
+      let totalLinked = 0
+      for (const p of mappedPartners) {
+        try {
+          const res = await apiFetch(`callrail-fetch?start=${start}&end=${end}&partnerId=${p.id}`)
+          const ids = (res.calls || []).map(c => String(c.id))
+          if (ids.length === 0) continue
+          await supabase
+            .from('calls')
+            .update({ partner_company: p.company_name })
+            .eq('user_id', session.user.id)
+            .in('callrail_id', ids)
+          totalLinked += ids.length
+        } catch { /* skip unmapped / failed partners */ }
+      }
+      await loadCalls()
+      setRelinkMessage(`Linked ${totalLinked} calls across ${mappedPartners.length} partner${mappedPartners.length !== 1 ? 's' : ''}.`)
+    } catch (err) {
+      setRelinkMessage(`Error: ${err.message}`)
+    } finally {
+      setRelinking(false)
+    }
+  }
+
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
     const partnerSuffix = call.partner_company && partners.find(p => p.company_name === call.partner_company)
@@ -1491,19 +1533,33 @@ export default function Dashboard({ session }) {
               <div className="pt-2 border-t border-gray-100 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Partner Companies</h3>
-                  <button
-                    onClick={handleDetectAccounts}
-                    disabled={detectingAccounts || !settingsForm.callrail_api_key}
-                    title={!settingsForm.callrail_api_key ? 'Save a Shared CallRail API Key first' : 'Auto-detect partner companies or accounts from CallRail'}
-                    className="text-xs px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                  >
-                    {detectingAccounts ? (
-                      <span className="animate-spin inline-block w-3 h-3 border border-indigo-600 border-t-transparent rounded-full" />
-                    ) : '🔍'}
-                    {detectingAccounts ? 'Detecting…' : 'Detect Accounts'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleRelinkCalls}
+                      disabled={relinking || partners.filter(p => p.callrail_account_id).length === 0}
+                      title="Update partner_company on all existing calls without re-running analysis"
+                      className="text-xs px-2 py-1 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                    >
+                      {relinking ? <span className="animate-spin inline-block w-3 h-3 border border-gray-500 border-t-transparent rounded-full" /> : '🔗'}
+                      {relinking ? 'Linking…' : 'Re-link Calls'}
+                    </button>
+                    <button
+                      onClick={handleDetectAccounts}
+                      disabled={detectingAccounts || !settingsForm.callrail_api_key}
+                      title={!settingsForm.callrail_api_key ? 'Save a Shared CallRail API Key first' : 'Auto-detect partner companies or accounts from CallRail'}
+                      className="text-xs px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                    >
+                      {detectingAccounts ? (
+                        <span className="animate-spin inline-block w-3 h-3 border border-indigo-600 border-t-transparent rounded-full" />
+                      ) : '🔍'}
+                      {detectingAccounts ? 'Detecting…' : 'Detect Accounts'}
+                    </button>
+                  </div>
                 </div>
                 {detectError && <p className="text-xs text-red-600">{detectError}</p>}
+                {relinkMessage && (
+                  <p className={`text-xs ${relinkMessage.startsWith('Error') ? 'text-red-600' : 'text-green-700'}`}>{relinkMessage}</p>
+                )}
                 <p className="text-xs text-gray-500">
                   Add one entry per partner company. Use <strong>Detect Accounts</strong> to auto-fill Account IDs from your shared CallRail key.
                 </p>
