@@ -636,6 +636,7 @@ export default function Dashboard({ session }) {
       ...options,
       headers: { ...options.headers, ...authHeader() },
     })
+    if (res.status === 202) return {}  // background function queued — no body to parse
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
     return data
