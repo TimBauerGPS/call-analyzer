@@ -83,7 +83,7 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
 
   const isDeep = call.analysis_tier === 'deep'
   const canDeepAnalyze = call.analysis_status === 'complete' && !isDeep && onDeepAnalyze
-  const canRetry = call.analysis_status === 'error' && onRetry
+  const canRetry = (call.analysis_status === 'error' || call.analysis_status === 'pending') && onRetry
 
   async function handleDeepConfirm() {
     setConfirmDeep(false)
@@ -160,11 +160,30 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
             </div>
           </div>
 
-          {/* Right: status + sentiment */}
+          {/* Right: status + retry + sentiment */}
           <div className="flex flex-col items-end gap-2 flex-shrink-0">
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_STYLES[call.analysis_status] || STATUS_STYLES.pending}`}>
-              {call.analysis_status || 'pending'}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_STYLES[call.analysis_status] || STATUS_STYLES.pending}`}>
+                {call.analysis_status || 'pending'}
+              </span>
+              {canRetry && (
+                <button
+                  onClick={async e => {
+                    e.stopPropagation()
+                    setRetryLoading(true)
+                    await onRetry(call)
+                    setRetryLoading(false)
+                  }}
+                  disabled={retryLoading}
+                  className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 hover:bg-amber-200 disabled:opacity-50 transition-colors flex items-center gap-1"
+                >
+                  {retryLoading ? (
+                    <span className="animate-spin inline-block w-3 h-3 border border-amber-700 border-t-transparent rounded-full" />
+                  ) : '↺'}
+                  {retryLoading ? 'Retrying…' : 'Retry'}
+                </button>
+              )}
+            </div>
             {call.sentiment_score != null && (
               <div className="w-28">
                 <SentimentBar score={call.sentiment_score} sentiment={call.sentiment} />
@@ -349,28 +368,6 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
                 </button>
               )}
             </div>
-
-            {canRetry && (
-              <button
-                onClick={async e => {
-                  e.stopPropagation()
-                  setRetryLoading(true)
-                  await onRetry(call)
-                  setRetryLoading(false)
-                }}
-                disabled={retryLoading}
-                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50 transition-colors flex items-center gap-1.5"
-              >
-                {retryLoading ? (
-                  <span className="animate-spin inline-block w-3 h-3 border border-red-600 border-t-transparent rounded-full" />
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                )}
-                {retryLoading ? 'Retrying…' : 'Retry Analysis'}
-              </button>
-            )}
 
             {canDeepAnalyze && (
               <button

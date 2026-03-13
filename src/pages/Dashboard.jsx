@@ -784,65 +784,6 @@ export default function Dashboard({ session }) {
     }
   }
 
-  async function handleReanalyzePending() {
-    if (processingRef.current) return
-    processingRef.current = true
-    setFetchStatus('processing')
-    setFetchMessage('Resetting errored calls and queuing for analysis…')
-    try {
-      // Reset all error calls to pending
-      await supabase
-        .from('calls')
-        .update({ analysis_status: 'pending' })
-        .eq('user_id', session.user.id)
-        .eq('analysis_status', 'error')
-
-      // Fetch all pending/error calls
-      const { data: toRetry } = await supabase
-        .from('calls')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .in('analysis_status', ['pending', 'error'])
-
-      const toAnalyze = toRetry || []
-      if (toAnalyze.length === 0) {
-        setFetchStatus('done')
-        setFetchMessage('No pending or errored calls to retry.')
-        processingRef.current = false
-        return
-      }
-
-      setFetchMessage(`Queuing ${toAnalyze.length} call${toAnalyze.length === 1 ? '' : 's'} for analysis…`)
-      const jobIds = []
-      for (const call of toAnalyze) {
-        try {
-          await analyzeCallStandard(call)
-          jobIds.push(call.id)
-          setFetchMessage(`Queued ${jobIds.length} / ${toAnalyze.length} calls…`)
-        } catch {
-          await supabase.from('calls').update({ analysis_status: 'error' }).eq('id', call.id)
-        }
-      }
-
-      if (jobIds.length === 0) {
-        setFetchStatus('error')
-        setFetchMessage('No calls could be queued — check CallRail credentials.')
-      } else {
-        setFetchMessage(`Analyzing ${jobIds.length} call${jobIds.length === 1 ? '' : 's'}…`)
-        await pollUntilDone(jobIds, (done, total) =>
-          setFetchMessage(`Analyzing… ${done} / ${total} complete`)
-        )
-        setFetchStatus('done')
-        setFetchMessage(`Done — ${jobIds.length} call${jobIds.length === 1 ? '' : 's'} analyzed.`)
-      }
-    } catch (err) {
-      setFetchStatus('error')
-      setFetchMessage(err.message)
-    } finally {
-      processingRef.current = false
-    }
-  }
-
   async function analyzeCallStandard(call) {
     await supabase.from('calls').update({ analysis_status: 'processing' }).eq('id', call.id)
     const partnerSuffix = call.partner_company && partners.find(p => p.company_name === call.partner_company)
@@ -930,7 +871,6 @@ export default function Dashboard({ session }) {
 
   // --- Render ---
   const fetchButtonDisabled = !keysConfigured || fetchStatus === 'fetching' || fetchStatus === 'processing'
-  const pendingOrErrorCount = calls.filter(c => c.analysis_status === 'pending' || c.analysis_status === 'error').length
 
   if (!settingsLoaded) {
     return (
@@ -1892,16 +1832,6 @@ export default function Dashboard({ session }) {
                   </>
                 ) : 'Fetch Calls'}
               </button>
-              {pendingOrErrorCount > 0 && (
-                <button
-                  onClick={handleReanalyzePending}
-                  disabled={fetchButtonDisabled}
-                  title="Re-analyze all pending and errored calls without re-fetching from CallRail"
-                  className="px-4 py-2 text-sm font-medium bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded-lg transition-colors flex items-center gap-2"
-                >
-                  ↺ Retry {pendingOrErrorCount} {pendingOrErrorCount === 1 ? 'Call' : 'Calls'}
-                </button>
-              )}
             </div>
             {fetchMessage && (
               <div className={`mt-3 text-xs px-3 py-2 rounded-lg border ${
