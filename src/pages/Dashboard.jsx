@@ -72,6 +72,7 @@ export default function Dashboard({ session }) {
   const [detectError, setDetectError] = useState(null)
   const [relinking, setRelinking] = useState(false)
   const [relinkMessage, setRelinkMessage] = useState(null)
+  const [partnerTestResults, setPartnerTestResults] = useState({}) // { [partnerId]: { loading, ok, message, detail } }
 
   const [metaPartner, setMetaPartner] = useState('')   // '' = all partners
   const [metaPrompt, setMetaPrompt] = useState(DEFAULT_META_PROMPT)
@@ -857,6 +858,22 @@ export default function Dashboard({ session }) {
     setAccountMapOpen(false)
   }
 
+  // Test CallRail connectivity for a single partner and surface detailed diagnostics.
+  async function handleTestPartner(partner) {
+    setPartnerTestResults(prev => ({ ...prev, [partner.id]: { loading: true } }))
+    try {
+      const res = await fetch('/.netlify/functions/callrail-test-partner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ partnerId: partner.id }),
+      })
+      const data = await res.json()
+      setPartnerTestResults(prev => ({ ...prev, [partner.id]: { loading: false, ...data } }))
+    } catch (err) {
+      setPartnerTestResults(prev => ({ ...prev, [partner.id]: { loading: false, ok: false, error: err.message } }))
+    }
+  }
+
   // Re-link existing calls to partner companies without re-running any analysis.
   // Fetches call IDs from CallRail per mapped partner, then bulk-updates partner_company in DB.
   async function handleRelinkCalls() {
@@ -1570,29 +1587,60 @@ export default function Dashboard({ session }) {
                     {partners.map(p => {
                       const hasCredentials = !!(p.callrail_account_id && (p.callrail_api_key || userSettings?.callrail_api_key))
                       const isMapped = !!p.callrail_account_id
+                      const testResult = partnerTestResults[p.id]
                       return (
-                        <div key={p.id} className={`flex items-center justify-between border rounded-lg px-3 py-2 text-sm ${hasCredentials ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                          <div className="flex items-center gap-2 flex-wrap min-w-0">
-                            <span className="font-medium text-gray-900 truncate">{p.company_name}</span>
-                            {hasCredentials ? (
-                              <span className="text-xs text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full flex-shrink-0">✓ Credentials set</span>
-                            ) : (
-                              <span className="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">⚠ Missing credentials</span>
-                            )}
-                            {isMapped && (
-                              <span className="text-xs text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full flex-shrink-0">🔗 Mapped</span>
-                            )}
+                        <div key={p.id} className={`border rounded-lg text-sm ${hasCredentials ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                          <div className="flex items-center justify-between px-3 py-2">
+                            <div className="flex items-center gap-2 flex-wrap min-w-0">
+                              <span className="font-medium text-gray-900 truncate">{p.company_name}</span>
+                              {hasCredentials ? (
+                                <span className="text-xs text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full flex-shrink-0">✓ Credentials set</span>
+                              ) : (
+                                <span className="text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full flex-shrink-0">⚠ Missing credentials</span>
+                              )}
+                              {isMapped && (
+                                <span className="text-xs text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full flex-shrink-0">🔗 Mapped</span>
+                              )}
+                            </div>
+                            <div className="flex gap-2 flex-shrink-0 items-center">
+                              {hasCredentials && (
+                                <button
+                                  onClick={() => handleTestPartner(p)}
+                                  disabled={testResult?.loading}
+                                  className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 transition-colors flex items-center gap-1"
+                                >
+                                  {testResult?.loading
+                                    ? <><span className="animate-spin inline-block w-3 h-3 border border-blue-600 border-t-transparent rounded-full" /> Testing…</>
+                                    : '🔌 Test'}
+                                </button>
+                              )}
+                              <button
+                                onClick={() => setPartnerForm({ id: p.id, company_name: p.company_name, callrail_api_key: p.callrail_api_key || '', callrail_account_id: p.callrail_account_id || '' })}
+                                className="text-xs text-indigo-600 hover:text-indigo-800"
+                              >Edit</button>
+                              <button
+                                onClick={() => deletePartner(p.id)}
+                                className="text-xs text-red-500 hover:text-red-700"
+                              >Remove</button>
+                            </div>
                           </div>
-                          <div className="flex gap-2 flex-shrink-0">
-                            <button
-                              onClick={() => setPartnerForm({ id: p.id, company_name: p.company_name, callrail_api_key: p.callrail_api_key || '', callrail_account_id: p.callrail_account_id || '' })}
-                              className="text-xs text-indigo-600 hover:text-indigo-800"
-                            >Edit</button>
-                            <button
-                              onClick={() => deletePartner(p.id)}
-                              className="text-xs text-red-500 hover:text-red-700"
-                            >Remove</button>
-                          </div>
+                          {testResult && !testResult.loading && (
+                            <div className={`px-3 pb-2 text-xs space-y-0.5 border-t ${testResult.ok ? 'border-green-200' : 'border-red-200'}`}>
+                              <p className={`font-semibold mt-1.5 ${testResult.ok ? 'text-green-700' : 'text-red-700'}`}>
+                                {testResult.ok ? '✓ Connected' : '✗ Connection failed'}
+                              </p>
+                              <p className="text-gray-700">{testResult.ok ? testResult.message : testResult.error}</p>
+                              {!testResult.ok && testResult.callrailMessage && (
+                                <p className="text-gray-500">CallRail says: "{testResult.callrailMessage}"</p>
+                              )}
+                              {!testResult.ok && testResult.httpStatus && (
+                                <p className="text-gray-500">HTTP {testResult.httpStatus} {testResult.httpStatusText}</p>
+                              )}
+                              {testResult.apiKeyHint && (
+                                <p className="text-gray-400">API key: {testResult.apiKeyHint} · Account: {testResult.accountId}{testResult.companyId ? ` · Company: ${testResult.companyId}` : ''}</p>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
