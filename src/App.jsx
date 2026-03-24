@@ -5,7 +5,23 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 
 function ProtectedRoute({ session, children }) {
-  if (session === undefined) {
+  const [accessChecked, setAccessChecked] = useState(false)
+  const [hasAccess, setHasAccess] = useState(false)
+
+  useEffect(() => {
+    if (!session) return
+    supabase
+      .from('user_app_access')
+      .select('role')
+      .eq('app_name', 'call-analyzer')
+      .single()
+      .then(({ data }) => {
+        setHasAccess(!!data)
+        setAccessChecked(true)
+      })
+  }, [session])
+
+  if (session === undefined || (session && !accessChecked)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600" />
@@ -13,6 +29,22 @@ function ProtectedRoute({ session, children }) {
     )
   }
   if (!session) return <Navigate to="/login" replace />
+  if (!hasAccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-lg font-semibold text-gray-800">Access not granted</p>
+          <p className="text-sm text-gray-500 mt-1">Your account does not have access to this app. Contact your administrator.</p>
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className="mt-4 text-sm text-brand-600 hover:underline"
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
+    )
+  }
   return children
 }
 

@@ -112,6 +112,7 @@ export async function handler(event) {
     email:         email.trim().toLowerCase(),
     password,
     email_confirm: true,
+    user_metadata: { signup_app: 'call-analyzer' },
   })
 
   if (createError) {

@@ -134,6 +134,11 @@ export async function handler(event) {
     })
   }
 
+  // ── Tag user as belonging to this app ───────────────────────
+  await supabase.auth.admin.updateUserById(targetUser.id, {
+    user_metadata: { signup_app: 'call-analyzer' },
+  })
+
   // ── Insert company_members row ───────────────────────────────
   const { error: insertError } = await supabase
     .from('company_members')
