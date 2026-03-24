@@ -84,8 +84,11 @@ export default function Dashboard({ session }) {
   const [metaEmailSent, setMetaEmailSent] = useState(false)
   const [metaEmailError, setMetaEmailError] = useState(null)
 
+  const [refreshingAttrib, setRefreshingAttrib] = useState(false)
+
   const processingRef = useRef(false)
   const hasAutoFetched = useRef(false)
+  const hasAutoRefreshed = useRef(false)
 
   // Settings state
   const [userSettings, setUserSettings] = useState(null)
@@ -398,6 +401,59 @@ export default function Dashboard({ session }) {
     } else {
       setShowFetchPrompt(true)
     }
+  }, [settingsLoaded, keysConfigured])
+
+  async function handleRefreshAttribution({ silent = false } = {}) {
+    if (refreshingAttrib) return
+    if (!silent) setRefreshingAttrib(true)
+    try {
+      const end = today()
+      const start = daysAgo(14)
+      let freshCalls = []
+      if (isMasterAdmin && partners.length > 0) {
+        const results = await Promise.all(
+          partners.filter(p => p.callrail_account_id).map(p =>
+            apiFetch(`callrail-fetch?start=${start}&end=${end}&partnerId=${p.id}`)
+              .then(res => res.calls || [])
+              .catch(() => [])
+          )
+        )
+        freshCalls = results.flat()
+      } else if (keysConfigured) {
+        const res = await apiFetch(`callrail-fetch?start=${start}&end=${end}`).catch(() => ({ calls: [] }))
+        freshCalls = res.calls || []
+      }
+      if (freshCalls.length === 0) return
+      await Promise.all(freshCalls.map(call =>
+        supabase.from('calls')
+          .update({
+            source:           call.source           || null,
+            utm_source:       call.utm_source       || null,
+            utm_medium:       call.utm_medium       || null,
+            utm_campaign:     call.utm_campaign     || null,
+            utm_term:         call.utm_term         || null,
+            gclid:            call.gclid            || null,
+            landing_page_url: call.landing_page_url || null,
+            referring_url:    call.referring_url    || null,
+          })
+          .eq('user_id', session.user.id)
+          .eq('callrail_id', String(call.id))
+      ))
+      await loadCalls()
+    } catch (err) {
+      console.error('Attribution refresh failed:', err)
+    } finally {
+      if (!silent) setRefreshingAttrib(false)
+    }
+  }
+
+  // Auto-refresh attribution silently on load (once after settings load)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!settingsLoaded || hasAutoRefreshed.current) return
+    if (!keysConfigured) return
+    hasAutoRefreshed.current = true
+    handleRefreshAttribution({ silent: true })
   }, [settingsLoaded, keysConfigured])
 
   async function saveSettings() {
@@ -2108,6 +2164,17 @@ export default function Dashboard({ session }) {
                     Working…
                   </>
                 ) : 'Fetch Calls'}
+              </button>
+              <button
+                onClick={() => handleRefreshAttribution()}
+                disabled={refreshingAttrib || !keysConfigured}
+                title="Re-fetch attribution data for the last 14 days from CallRail"
+                className="px-3 py-2 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-50 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                {refreshingAttrib ? (
+                  <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-gray-500 border-t-transparent rounded-full" />
+                ) : '↻'}
+                {refreshingAttrib ? 'Refreshing…' : 'Refresh Attribution'}
               </button>
             </div>
             {fetchMessage && (

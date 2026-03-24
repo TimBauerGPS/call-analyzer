@@ -120,10 +120,10 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
               {call.source && (
                 <Badge
                   value={call.source}
-                  colorClass={call.is_ppc ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}
+                  colorClass={(call.is_ppc || call.gclid) ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}
                 />
               )}
-              {call.is_ppc && (
+              {(call.is_ppc || call.gclid) && (
                 <Badge value="PPC" colorClass="bg-orange-100 text-orange-800" />
               )}
               {call.viable_lead === 'Yes' && (
