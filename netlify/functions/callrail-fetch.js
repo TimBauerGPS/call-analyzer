@@ -1,6 +1,7 @@
 /**
  * Proxy: Fetch calls from CallRail for a date range.
  * API keys are fetched server-side from the user's Supabase settings.
+ * Paginates automatically through all pages (250 per page).
  *
  * Query params: start (ISO date), end (ISO date)
  * Header: Authorization: Bearer <supabase_jwt>
@@ -26,25 +27,38 @@ export const handler = async (event) => {
     'gclid', 'landing_page_url', 'referring_url',
   ].join(',')
 
-  const url = new URL(`https://api.callrail.com/v3/a/${settings.callrail_account_id}/calls.json`)
-  url.searchParams.set('date_range_start', start)
-  url.searchParams.set('date_range_end', end)
-  url.searchParams.set('fields', fields)
-  url.searchParams.set('sort', 'start_time')
-  url.searchParams.set('order', 'desc')
-  url.searchParams.set('per_page', '250')
-  // Company-filter mode: single parent account with multiple sub-companies
-  if (settings.callrail_company_id) {
-    url.searchParams.set('company_id', settings.callrail_company_id)
-  }
+  const headers = { Authorization: `Token token=${settings.callrail_api_key}` }
 
   try {
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Token token=${settings.callrail_api_key}` },
-    })
-    const data = await res.json()
-    if (!res.ok) return json(res.status, { error: data.error || 'CallRail API error', details: data })
-    return json(200, { calls: data.calls || [] })
+    const allCalls = []
+    let page = 1
+    let totalPages = 1
+
+    while (page <= totalPages) {
+      const url = new URL(`https://api.callrail.com/v3/a/${settings.callrail_account_id}/calls.json`)
+      url.searchParams.set('date_range_start', start)
+      url.searchParams.set('date_range_end', end)
+      url.searchParams.set('fields', fields)
+      url.searchParams.set('sort', 'start_time')
+      url.searchParams.set('order', 'desc')
+      url.searchParams.set('per_page', '250')
+      url.searchParams.set('page', String(page))
+      if (settings.callrail_company_id) {
+        url.searchParams.set('company_id', settings.callrail_company_id)
+      }
+
+      const res = await fetch(url.toString(), { headers })
+      const data = await res.json()
+      if (!res.ok) return json(res.status, { error: data.error || 'CallRail API error', details: data })
+
+      allCalls.push(...(data.calls || []))
+
+      // CallRail returns pagination metadata in data.metadata
+      totalPages = data.metadata?.total_pages ?? 1
+      page++
+    }
+
+    return json(200, { calls: allCalls })
   } catch (err) {
     return json(500, { error: 'Failed to fetch from CallRail', message: err.message })
   }
