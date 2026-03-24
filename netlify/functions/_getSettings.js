@@ -85,13 +85,12 @@ export async function getSettings(authHeader, { partnerId, requireCallRail = tru
       throw new Error(`Partner "${partner.company_name}" has no API key and no shared CallRail API key is configured in Settings.`)
     }
     apiKeys.callrail_api_key = partnerApiKey
-    // Company-filter mode: if the partner is using the shared agency API key AND
-    // user_settings has a parent account ID, the partner's callrail_account_id is
-    // actually a CallRail company ID within that parent account.
-    // BUT: if the partner has their own API key, they are a standalone account —
-    // use their callrail_account_id directly and skip the company filter.
+    // Determine routing mode based on the format of the partner's stored ID:
+    // - Starts with 'ACC' → standalone CallRail account, use directly
+    // - Starts with 'COM' or is numeric → sub-company under the shared parent account
     const sharedAccountId = userSettingsRow?.callrail_account_id
-    if (sharedAccountId && !partner.callrail_api_key) {
+    const isStandaloneAccount = partner.callrail_account_id?.startsWith('ACC')
+    if (sharedAccountId && !isStandaloneAccount) {
       apiKeys.callrail_account_id = sharedAccountId
       apiKeys.callrail_company_id = partner.callrail_account_id
     } else {

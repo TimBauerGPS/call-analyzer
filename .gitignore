@@ -6,3 +6,7 @@ dist
 
 # Local Netlify folder
 .netlify
+
+# Local credential files — never commit
+*.env
+DRP.env

@@ -1637,7 +1637,14 @@ export default function Dashboard({ session }) {
                                 <p className="text-gray-500">HTTP {testResult.httpStatus} {testResult.httpStatusText}</p>
                               )}
                               {testResult.apiKeyHint && (
-                                <p className="text-gray-400">API key: {testResult.apiKeyHint} · Account: {testResult.accountId}{testResult.companyId ? ` · Company: ${testResult.companyId}` : ''}</p>
+                                <p className="text-gray-400">
+                                  API key: {testResult.apiKeyHint}
+                                  {' · '}
+                                  {testResult.companyId
+                                    ? <>Parent acct: {testResult.accountId} · CallRail company ID: {testResult.companyId}</>
+                                    : <>CallRail acct ID: {testResult.accountId}</>
+                                  }
+                                </p>
                               )}
                             </div>
                           )}
