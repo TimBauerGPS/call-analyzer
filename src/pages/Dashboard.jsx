@@ -738,7 +738,7 @@ export default function Dashboard({ session }) {
         rawCalls = (res.calls || []).map(c => ({ ...c, _partnerName: partnerName || null }))
       }
 
-      const eligible = rawCalls.filter(c => c.duration >= 60 && c.recording)
+      const eligible = rawCalls.filter(c => c.duration >= 60 && (c.recording || c.recording_player))
       setFetchMessage(`${eligible.length} eligible calls found. Saving…`)
 
       const rows = eligible.map(call => {
