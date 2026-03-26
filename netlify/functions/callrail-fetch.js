@@ -36,8 +36,8 @@ export const handler = async (event) => {
 
     while (page <= totalPages) {
       const url = new URL(`https://api.callrail.com/v3/a/${settings.callrail_account_id}/calls.json`)
-      url.searchParams.set('date_range_start', start)
-      url.searchParams.set('date_range_end', end)
+      url.searchParams.set('start_date', start)
+      url.searchParams.set('end_date', end)
       url.searchParams.set('fields', fields)
       url.searchParams.set('sort', 'start_time')
       url.searchParams.set('order', 'desc')
