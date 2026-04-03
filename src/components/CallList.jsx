@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import CallCard from './CallCard'
 import StatsBar from './StatsBar'
+
+const CALLS_PER_PAGE = 25
 
 const SORT_OPTIONS = [
   { value: 'date_desc', label: 'Newest First' },
@@ -38,6 +40,10 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
   const [filterAlbi, setFilterAlbi] = useState('all')
   const [filterPartner, setFilterPartner] = useState('all')
   const [search, setSearch] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+
+  // Reset to page 1 whenever filters or sort change
+  useEffect(() => { setCurrentPage(1) }, [search, filterHandler, filterViable, filterScheduled, filterPpc, filterStatus, filterAlbi, filterPartner, sort])
 
   // Build unique handler list for dropdown
   const handlerOptions = useMemo(() => {
@@ -95,6 +101,9 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
 
     return result
   }, [calls, sort, filterHandler, filterViable, filterScheduled, filterPpc, filterStatus, filterAlbi, filterPartner, search])
+
+  const totalPages = Math.ceil(filtered.length / CALLS_PER_PAGE)
+  const paginated = filtered.slice((currentPage - 1) * CALLS_PER_PAGE, currentPage * CALLS_PER_PAGE)
 
   return (
     <div>
@@ -187,6 +196,29 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
         <span className="text-xs text-gray-400 ml-auto">{filtered.length} calls</span>
       </div>
 
+      {/* Pagination — top */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mb-3 px-1">
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Prev
+          </button>
+          <span className="text-xs text-gray-500">
+            Page {currentPage} of {totalPages} &nbsp;·&nbsp; {filtered.length} calls
+          </span>
+          <button
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Next →
+          </button>
+        </div>
+      )}
+
       {/* Call cards */}
       {filtered.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
@@ -194,9 +226,32 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
         </div>
       ) : (
         <div className="space-y-3">
-          {filtered.map(call => (
+          {paginated.map(call => (
             <CallCard key={call.id} call={call} onDeepAnalyze={onDeepAnalyze} onRetry={onRetry} />
           ))}
+        </div>
+      )}
+
+      {/* Pagination — bottom */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4 px-1">
+          <button
+            onClick={() => { setCurrentPage(p => Math.max(1, p - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+            disabled={currentPage === 1}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ← Prev
+          </button>
+          <span className="text-xs text-gray-500">
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            onClick={() => { setCurrentPage(p => Math.min(totalPages, p + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+            disabled={currentPage === totalPages}
+            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Next →
+          </button>
         </div>
       )}
     </div>
