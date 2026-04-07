@@ -2,6 +2,8 @@
  * Summary statistics bar above the call list.
  * Computed from the currently filtered set of calls.
  */
+import { isPpcAttributedCall } from '../lib/callAttribution'
+
 export default function StatsBar({ calls }) {
   if (!calls.length) return null
 
@@ -9,7 +11,7 @@ export default function StatsBar({ calls }) {
   const viableLeads = complete.filter(c => c.viable_lead === 'Yes')
   const viableCount = viableLeads.length
   const scheduled = complete.filter(c => c.scheduled === true).length
-  const ppc = complete.filter(c => c.is_ppc === true).length
+  const ppc = complete.filter(isPpcAttributedCall).length
   const scores = complete.filter(c => c.sentiment_score != null).map(c => c.sentiment_score)
   const avgSentiment = scores.length
     ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)

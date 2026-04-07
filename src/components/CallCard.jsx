@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import SentimentBar from './SentimentBar'
+import { isPpcAttributedCall } from '../lib/callAttribution'
 
 const STATUS_STYLES = {
   complete: 'bg-green-100 text-green-800',
@@ -82,6 +83,7 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
   const [retryLoading, setRetryLoading] = useState(false)
 
   const isDeep = call.analysis_tier === 'deep'
+  const isPaidCall = isPpcAttributedCall(call)
   const canDeepAnalyze = call.analysis_status === 'complete' && !isDeep && onDeepAnalyze
   const canRetry = (call.analysis_status === 'error' || call.analysis_status === 'pending') && onRetry
 
@@ -120,10 +122,10 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
               {call.source && (
                 <Badge
                   value={call.source}
-                  colorClass={(call.is_ppc || call.gclid) ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}
+                  colorClass={isPaidCall ? 'bg-orange-100 text-orange-800' : 'bg-gray-100 text-gray-600'}
                 />
               )}
-              {(call.is_ppc || call.gclid) && (
+              {isPaidCall && (
                 <Badge value="PPC" colorClass="bg-orange-100 text-orange-800" />
               )}
               {call.viable_lead === 'Yes' && (

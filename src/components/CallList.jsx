@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import CallCard from './CallCard'
 import StatsBar from './StatsBar'
+import { isPpcAttributedCall } from '../lib/callAttribution'
 
 const CALLS_PER_PAGE = 25
 
@@ -79,7 +80,7 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
     if (filterHandler !== 'all') result = result.filter(c => c.handler_name === filterHandler)
     if (filterViable !== 'all') result = result.filter(c => c.viable_lead === (filterViable === 'yes' ? 'Yes' : 'No'))
     if (filterScheduled !== 'all') result = result.filter(c => c.scheduled === (filterScheduled === 'yes'))
-    if (filterPpc !== 'all') result = result.filter(c => c.is_ppc === (filterPpc === 'yes'))
+    if (filterPpc !== 'all') result = result.filter(c => isPpcAttributedCall(c) === (filterPpc === 'yes'))
     if (filterStatus !== 'all') result = result.filter(c => c.analysis_status === filterStatus)
     if (filterAlbi === 'all_albi')    result = result.filter(c => hasAlbi(c))
     if (filterAlbi === 'signed')      result = result.filter(c => hasAlbi(c) && c.contract_signed)
