@@ -76,6 +76,7 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
     }
 
     const hasAlbi = c => !!(c.customer_name || c.albi_url || c.job_id)
+    const isSignedAlbi = c => Boolean(c.contract_signed)
 
     if (filterHandler !== 'all') result = result.filter(c => c.handler_name === filterHandler)
     if (filterViable !== 'all') result = result.filter(c => c.viable_lead === (filterViable === 'yes' ? 'Yes' : 'No'))
@@ -83,8 +84,8 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
     if (filterPpc !== 'all') result = result.filter(c => isPpcAttributedCall(c) === (filterPpc === 'yes'))
     if (filterStatus !== 'all') result = result.filter(c => c.analysis_status === filterStatus)
     if (filterAlbi === 'all_albi')    result = result.filter(c => hasAlbi(c))
-    if (filterAlbi === 'signed')      result = result.filter(c => hasAlbi(c) && c.contract_signed)
-    if (filterAlbi === 'pending')     result = result.filter(c => hasAlbi(c) && c.job_status !== 'Closed' && c.job_status !== 'Lost')
+    if (filterAlbi === 'signed')      result = result.filter(c => hasAlbi(c) && isSignedAlbi(c))
+    if (filterAlbi === 'pending')     result = result.filter(c => hasAlbi(c) && !isSignedAlbi(c) && c.job_status !== 'Closed' && c.job_status !== 'Lost')
     if (filterAlbi === 'lost')        result = result.filter(c => hasAlbi(c) && c.job_status === 'Lost')
     if (filterPartner !== 'all')      result = result.filter(c => c.partner_company === filterPartner)
 
