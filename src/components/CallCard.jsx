@@ -84,6 +84,12 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
 
   const isDeep = call.analysis_tier === 'deep'
   const isPaidCall = isPpcAttributedCall(call)
+  const searchKeyword = typeof call.utm_term === 'string' && call.utm_term.trim()
+    ? call.utm_term.trim()
+    : null
+  const keywordBadge = searchKeyword && searchKeyword.length > 36
+    ? `${searchKeyword.slice(0, 33)}...`
+    : searchKeyword
   const canDeepAnalyze = call.analysis_status === 'complete' && !isDeep && onDeepAnalyze
   const canRetry = (call.analysis_status === 'error' || call.analysis_status === 'pending') && onRetry
 
@@ -127,6 +133,9 @@ export default function CallCard({ call, onDeepAnalyze, onRetry }) {
               )}
               {isPaidCall && (
                 <Badge value="PPC" colorClass="bg-orange-100 text-orange-800" />
+              )}
+              {isPaidCall && keywordBadge && (
+                <Badge label="Keyword:" value={keywordBadge} colorClass="bg-sky-100 text-sky-800" />
               )}
               {call.viable_lead === 'Yes' && (
                 <Badge value="Viable Lead" colorClass="bg-teal-100 text-teal-800" />

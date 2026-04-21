@@ -37,6 +37,10 @@ function maskKey(key) {
   if (!key) return ''
   return key.slice(0, 6) + '••••••••' + key.slice(-4)
 }
+function firstText(...values) {
+  const found = values.find(value => typeof value === 'string' && value.trim())
+  return found ? found.trim() : null
+}
 
 // --- Main component ---
 export default function Dashboard({ session }) {
@@ -745,6 +749,7 @@ export default function Dashboard({ session }) {
         const phone = normalizePhone(call.customer_phone_number)
         const jobData = jobMap?.get(phone) || {}
         const callLink = call.recording_player || `https://app.callrail.com/calls/${call.id}`
+        const searchKeyword = firstText(call.keywords, call.keyword, call.utm_term)
         return {
           user_id:          session.user.id,
           company_id:       membership?.companyId || null,
@@ -764,7 +769,7 @@ export default function Dashboard({ session }) {
           utm_source:       call.utm_source       || null,
           utm_medium:       call.utm_medium       || null,
           utm_campaign:     call.utm_campaign     || null,
-          utm_term:         call.utm_term         || null,
+          utm_term:         searchKeyword,
           gclid:            call.gclid            || null,
           landing_page_url: call.landing_page_url || null,
           referring_url:    call.referring_url    || null,
@@ -778,6 +783,35 @@ export default function Dashboard({ session }) {
           .from('calls')
           .upsert(rows, { onConflict: 'user_id,callrail_id', ignoreDuplicates: true })
         if (upsertErr) throw new Error('Supabase upsert failed: ' + upsertErr.message)
+      }
+
+      // Refresh attribution fields on existing rows when the same date range is fetched again.
+      // CallRail can populate PPC keywords after the original call, and the insert above skips
+      // duplicates to avoid overwriting transcripts or analysis results.
+      for (const row of rows) {
+        const updates = {}
+        ;[
+          'source',
+          'utm_source',
+          'utm_medium',
+          'utm_campaign',
+          'utm_term',
+          'gclid',
+          'landing_page_url',
+          'referring_url',
+          'partner_company',
+        ].forEach(field => {
+          if (row[field] != null) updates[field] = row[field]
+        })
+
+        if (Object.keys(updates).length === 0) continue
+
+        const { error: updateErr } = await supabase
+          .from('calls')
+          .update(updates)
+          .eq('user_id', session.user.id)
+          .eq('callrail_id', row.callrail_id)
+        if (updateErr) throw new Error('Supabase attribution update failed: ' + updateErr.message)
       }
 
       // Patch partner_company on ALL fetched calls (new + existing).

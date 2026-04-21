@@ -84,6 +84,7 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
     if (filterPpc !== 'all') result = result.filter(c => isPpcAttributedCall(c) === (filterPpc === 'yes'))
     if (filterStatus !== 'all') result = result.filter(c => c.analysis_status === filterStatus)
     if (filterAlbi === 'all_albi')    result = result.filter(c => hasAlbi(c))
+    if (filterAlbi === 'not_albi')    result = result.filter(c => !hasAlbi(c))
     if (filterAlbi === 'signed')      result = result.filter(c => hasAlbi(c) && isSignedAlbi(c))
     if (filterAlbi === 'pending')     result = result.filter(c => hasAlbi(c) && !isSignedAlbi(c) && c.job_status !== 'Closed' && c.job_status !== 'Lost')
     if (filterAlbi === 'lost')        result = result.filter(c => hasAlbi(c) && c.job_status === 'Lost')
@@ -180,6 +181,7 @@ export default function CallList({ calls, onDeepAnalyze, onRetry, partners = [] 
           options={[
             { value: 'all',      label: 'All Calls' },
             { value: 'all_albi', label: 'All Albi Leads' },
+            { value: 'not_albi', label: 'Not in Albi' },
             { value: 'signed',   label: 'Signed Albi Leads' },
             { value: 'pending',  label: 'Pending Albi' },
             { value: 'lost',     label: 'Lost Albi' },

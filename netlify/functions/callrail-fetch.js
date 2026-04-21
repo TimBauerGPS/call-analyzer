@@ -23,7 +23,7 @@ export const handler = async (event) => {
     'source', 'source_name', 'recording', 'recording_player',
     'answered', 'direction',
     // Attribution / PPC fields
-    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term',
+    'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'keywords',
     'gclid', 'landing_page_url', 'referring_url',
   ].join(',')
 
