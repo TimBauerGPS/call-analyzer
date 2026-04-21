@@ -428,21 +428,22 @@ export default function Dashboard({ session }) {
         freshCalls = res.calls || []
       }
       if (freshCalls.length === 0) return
-      await Promise.all(freshCalls.map(call =>
-        supabase.from('calls')
+      await Promise.all(freshCalls.map(call => {
+        const searchKeyword = firstText(call.keywords, call.keyword, call.utm_term)
+        return supabase.from('calls')
           .update({
             source:           call.source           || null,
             utm_source:       call.utm_source       || null,
             utm_medium:       call.utm_medium       || null,
             utm_campaign:     call.utm_campaign     || null,
-            utm_term:         call.utm_term         || null,
+            utm_term:         searchKeyword,
             gclid:            call.gclid            || null,
             landing_page_url: call.landing_page_url || null,
             referring_url:    call.referring_url    || null,
           })
           .eq('user_id', session.user.id)
           .eq('callrail_id', String(call.id))
-      ))
+      }))
       await loadCalls()
     } catch (err) {
       console.error('Attribution refresh failed:', err)
